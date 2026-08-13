@@ -1,0 +1,8 @@
+{
+  "functions": {
+    "api/move.js": {
+      "maxDuration": 10,
+      "includeFiles": "engine/**"
+    }
+  }
+}

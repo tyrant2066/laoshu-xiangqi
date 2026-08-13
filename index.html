@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>老叔之家象棋</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>老叔之家象棋</h1>
+    <span id="subtitle">墨水屏特供 · 零动画 · 高对比</span>
+  </header>
+
+  <div id="status">欢迎来到老叔之家象棋</div>
+
+  <div id="boardWrap">
+    <canvas id="board"></canvas>
+  </div>
+
+  <div id="captured">
+    <div id="capRed" class="capLine">红方吃子：（无）</div>
+    <div id="capBlack" class="capLine">黑方吃子：（无）</div>
+  </div>
+
+  <div id="actionBar" class="bar">
+    <button id="btnNew" class="btn bigBtn">开始</button>
+    <button id="btnUndo" class="btn bigBtn">悔棋</button>
+    <button id="btnResign" class="btn bigBtn">认输</button>
+    <button id="btnSettings" class="btn bigBtn">设置</button>
+  </div>
+
+  <div id="debugBox" hidden></div>
+</div>
+
+<div id="settingsModal" class="modal" hidden>
+  <div class="modalBackdrop" id="modalBackdrop"></div>
+  <div class="modalPanel" role="dialog" aria-modal="true">
+    <h2>设置</h2>
+
+    <div class="mGroup" id="mGroupMode">
+      <div class="mLabel">对战模式</div>
+      <div class="mBtns">
+        <button id="mModeAI" class="btn mSel on">人机对战</button>
+        <button id="mModeDuel" class="btn mSel">双人同屏</button>
+      </div>
+    </div>
+
+    <div class="mGroup" id="mGroupLevel">
+      <div class="mLabel">AI 难度</div>
+      <div class="mBtns">
+        <button class="btn mSel" data-level="1">新手</button>
+        <button class="btn mSel" data-level="2">入门</button>
+        <button class="btn mSel on" data-level="3">中级</button>
+        <button class="btn mSel" data-level="4">高级</button>
+        <button class="btn mSel" data-level="5">大师</button>
+      </div>
+    </div>
+
+    <div class="mGroup" id="mGroupSide">
+      <div class="mLabel">执棋方</div>
+      <div class="mBtns">
+        <button id="mSideRed" class="btn mSel on">我执红</button>
+        <button id="mSideBlack" class="btn mSel">我执黑</button>
+      </div>
+      <div class="mHint">切换执棋方将开启新的一局</div>
+    </div>
+
+    <div class="mGroup">
+      <div class="mLabel">墨水屏</div>
+      <div class="mBtns">
+        <button id="mGhost" class="btn mSel">刷新屏幕</button>
+        <button id="mLogToggle" class="btn mSel">调试日志</button>
+      </div>
+    </div>
+
+    <button id="mClose" class="btn mClose">关闭</button>
+  </div>
+</div>
+
+<script src="js/ai.js"></script>
+<script src="js/ui.js"></script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+# Pikafish NNUE 大体积权重(53MB)
+# Vercel 函数 50MB 体积限制内不可打包; 改为 Release asset + NNUE_URL 冷启动下载到 /tmp
+# 参见 DEPLOY.md「2. 一次性准备」
+*.nnue
+**/pikafish.nnue
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Vercel 本地产物
+.vercel/
+out/
+
+# 系统 / 编辑器
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
