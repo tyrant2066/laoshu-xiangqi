@@ -1,4 +1,6 @@
 {
+  "buildCommand": "",
+  "outputDirectory": ".",
   "functions": {
     "api/move.js": {
       "maxDuration": 10,
