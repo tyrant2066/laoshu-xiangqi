@@ -155,10 +155,12 @@
     ctx.beginPath();
     for (var c = 0; c < 9; c++) {
       if (c === 0 || c === 8) {
+        // 左右外边线: 从行0 一直连通绘制到行9, 封死左右边界
+        ctx.moveTo(gx(c), gy(0)); ctx.lineTo(gx(c), gy(10));
+      } else {
+        // 中间 7 条竖线: 上段行0~行4, 下段行5~行9, 河界区域留空
         ctx.moveTo(gx(c), gy(0)); ctx.lineTo(gx(c), gy(4));
         ctx.moveTo(gx(c), gy(5)); ctx.lineTo(gx(c), gy(10));
-      } else {
-        ctx.moveTo(gx(c), gy(0)); ctx.lineTo(gx(c), gy(10));
       }
     }
     for (var r = 0; r <= 10; r++) {
@@ -421,13 +423,15 @@
       level: game.level,
       history: hist,
       token: token
-    }, function (res) {
+    }, function (res, err) {
       if (token.cancelled) return;
       aiThinking = false;
       aiToken = null;
       if (!res || !res.move) {
-        errorLog('AI 未返回着法(AI=' + (E.engineInfo ? E.engineInfo() : E.workerInfo()) + ')');
-        aiError = 'AI 无响应，请检查网络后重试或悔棋';
+        var reason = err && err.message ? err.message : '引擎未返回着法';
+        var api = (typeof LAOSHUJI_API === 'string' && LAOSHUJI_API) ? LAOSHUJI_API : '/api/move';
+        errorLog('AI 请求失败: ' + reason + ' (API=' + api + ')');
+        aiError = 'AI 无响应（' + reason + '），请检查网络后重试或悔棋';
         redrawAll();
         setControls();
         return;

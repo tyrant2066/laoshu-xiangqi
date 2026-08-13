@@ -367,7 +367,7 @@
           if (cancelled() || settled) return;
           settled = true;
           if (!data || !data.move || typeof data.move.f !== 'number' || typeof data.move.t !== 'number') {
-            done(null); return;
+            done(null, new Error('响应缺少 move 字段')); return;
           }
           done({
             move: { f: data.move.f, t: data.move.t },
@@ -381,8 +381,8 @@
           clearTimeout(timer);
           if (cancelled() || settled) return;
           settled = true;
-          if (err && err.name === 'AbortError') { done(null); return; }
-          done(null);
+          if (err && err.name === 'AbortError') { done(null, new Error('请求超时(20秒)')); return; }
+          done(null, err instanceof Error ? err : new Error('请求失败: ' + String(err)));
         });
     } else {
       var xhr = null;
@@ -395,20 +395,33 @@
           if (xhr.readyState !== 4 || cancelled() || settled) return;
           clearTimeout(timer2);
           settled = true;
+          if (xhr.status < 200 || xhr.status >= 300) {
+            done(null, new Error('HTTP ' + xhr.status));
+            return;
+          }
           var data = null;
           try { data = JSON.parse(xhr.responseText); } catch (e) {}
-          if (xhr.status >= 200 && xhr.status < 300 && data && data.move && typeof data.move.f === 'number') {
+          if (data && data.move && typeof data.move.f === 'number') {
             done({ move: { f: data.move.f, t: data.move.t }, depth: data.depth || 0, nodes: data.nodes || 0, ms: data.ms || (nowMs() - t0), score: typeof data.score === 'number' ? data.score : 0 });
           } else {
-            done(null);
+            done(null, new Error('响应解析失败或缺少 move 字段'));
           }
         };
-        xhr.onerror = function () { clearTimeout(timer2); if (!cancelled() && !settled) { settled = true; done(null); } };
-        xhr.ontimeout = function () { if (!cancelled() && !settled) { settled = true; done(null); } };
+        xhr.onabort = function () {
+          clearTimeout(timer2);
+          if (!cancelled() && !settled) { settled = true; done(null, new Error('请求被中止(超时?)')); }
+        };
+        xhr.onerror = function () {
+          clearTimeout(timer2);
+          if (!cancelled() && !settled) { settled = true; done(null, new Error('网络错误(XHR)')); }
+        };
+        xhr.ontimeout = function () {
+          if (!cancelled() && !settled) { settled = true; done(null, new Error('请求超时(20秒)')); }
+        };
         xhr.send();
         timer2 = setTimeout(function () { try { xhr.abort(); } catch (e) {} }, 20000);
       } catch (e) {
-        done(null);
+        done(null, e instanceof Error ? e : new Error('发起请求异常: ' + String(e)));
       }
     }
     return { cancel: function () { ctrl.cancelled = true; if (abort) { try { abort.abort(); } catch (e) {} } } };
