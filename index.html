@@ -10,25 +10,23 @@
 <body>
 <div id="app">
   <header>
-    <h1>老叔之家象棋</h1>
-    <span id="subtitle">墨水屏特供 · 零动画 · 高对比</span>
+    <span id="logo">老叔之家象棋</span>
+    <span id="status">欢迎来到老叔之家象棋</span>
   </header>
-
-  <div id="status">欢迎来到老叔之家象棋</div>
 
   <div id="boardWrap">
     <canvas id="board"></canvas>
   </div>
 
   <div id="captured">
-    <div id="capRed" class="capLine">红方吃子：（无）</div>
-    <div id="capBlack" class="capLine">黑方吃子：（无）</div>
+    <span id="capRed" class="capLine">红方吃子：（无）</span>
+    <span id="capBlack" class="capLine">黑方吃子：（无）</span>
   </div>
 
   <div id="actionBar" class="bar">
     <button id="btnNew" class="btn bigBtn">开始</button>
     <button id="btnUndo" class="btn bigBtn">悔棋</button>
-    <button id="btnResign" class="btn bigBtn">认输</button>
+    <button id="btnGhost" class="btn bigBtn">刷新</button>
     <button id="btnSettings" class="btn bigBtn">设置</button>
   </div>
 
@@ -71,7 +69,6 @@
     <div class="mGroup">
       <div class="mLabel">墨水屏</div>
       <div class="mBtns">
-        <button id="mGhost" class="btn mSel">刷新屏幕</button>
         <button id="mLogToggle" class="btn mSel">调试日志</button>
       </div>
     </div>

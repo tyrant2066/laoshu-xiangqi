@@ -8,7 +8,7 @@
 
   var canvas, ctx;
   var cell = 0, pad = 0, dpr = 1;
-  var RATIO = 11.7;
+  var RATIO = 11.0;
   var game = null;
   var sel = -1;
   var aiThinking = false;
@@ -18,8 +18,8 @@
   var lastTapAt = 0;
   var logLines = [];
 
-  var STATUS, capRed, capBlack, debugBox, btnUndo, btnNew, btnResign, btnSettings;
-  var modal, modalBackdrop, mModeAI, mModeDuel, mSideRed, mSideBlack, mGhost, mLogToggle, mClose;
+  var STATUS, capRed, capBlack, debugBox, btnUndo, btnNew, btnGhost, btnSettings;
+  var modal, modalBackdrop, mModeAI, mModeDuel, mSideRed, mSideBlack, mLogToggle, mClose;
   var mGroupLevel, mGroupSide;
   var levelBtns = [];
 
@@ -130,20 +130,22 @@
     var below = capRed.offsetHeight + $('actionBar').offsetHeight + (debugBox && !debugBox.hidden ? debugBox.offsetHeight : 0) + 18;
     var availW = Math.max(240, vw - 16);
     var availH = Math.max(240, vh - above - below - 12);
-    // 画布固有纵横比固定为 11.7 : 9 (pad*2 + 10 行 + 0.5 单元格)
+    // 画布固有纵横比固定为 11 : 9 = (10行 + 双侧0.5格) : (8列 + 双侧0.5格)
+    // 格子间距 cell 满足画布宽 = 9 * cell（8 个网格间距 + 左右各半格）
     var cssW = Math.floor(Math.min(availW, availH * 9 / RATIO));
-    var cssH = Math.floor(cssW * RATIO / 9);
     cell = cssW / 9;
-    pad = cell * 0.6;
+    pad = cell * 0.5;
     dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    var cssH = Math.floor(cell * 11);
     canvas.style.width = cssW + 'px';
     canvas.style.height = cssH + 'px';
     canvas.width = Math.round(cssW * dpr);
     canvas.height = Math.round(cssH * dpr);
   }
 
-  function sqX(sq) { return pad + ((sq % 9) + 0.5) * cell; }
-  function sqY(sq) { return pad + (((sq / 9) | 0) + 0.5) * cell; }
+  // 交叉点坐标: 棋子落在 9 条竖线(0..8)与 10 条横线(0..9)的交点上
+  function sqX(sq) { return pad + (sq % 9) * cell; }
+  function sqY(sq) { return pad + ((sq / 9) | 0) * cell; }
 
   function drawGrid() {
     var gx = function (c) { return pad + c * cell; };
@@ -360,7 +362,7 @@
   function setControls() {
     btnUndo.disabled = game.history.length === 0 || game.over;
     btnNew.disabled = false;
-    btnResign.disabled = game.mode !== 'ai' || game.over;
+    btnGhost.disabled = false;
     btnSettings.disabled = false;
   }
 
@@ -503,9 +505,8 @@
     var rect = canvas.getBoundingClientRect();
     var x = (pos.x - rect.left) * ((canvas.width / dpr) / rect.width);
     var y = (pos.y - rect.top) * ((canvas.height / dpr) / rect.height);
-    if (x < pad || y < pad) return;
-    var c = Math.floor((x - pad) / cell);
-    var r = Math.floor((y - pad) / cell);
+    var c = Math.round((x - pad) / cell);
+    var r = Math.round((y - pad) / cell);
     if (c < 0 || c > 8 || r < 0 || r > 9) return;
     tapSquare(r * 9 + c);
   }
@@ -563,18 +564,6 @@
     if (game.turn !== game.playerSide) startAI();
   }
 
-  function doResign() {
-    if (game.mode !== 'ai' || game.over) return;
-    cancelAI();
-    game.over = true;
-    game.result = { type: 'resign', winner: game.playerSide === RED ? BLACK : RED, loser: game.playerSide };
-    sel = -1;
-    log('玩家认输，对局结束');
-    redrawAll();
-    save();
-    setControls();
-  }
-
   function doGhost() {
     log('去残影: 全屏重绘');
     redrawAll();
@@ -618,25 +607,6 @@
     updateStatus();
   }
 
-  var confirmTimers = {};
-  function confirmFlow(btn, fn) {
-    var orig = btn.textContent;
-    if (btn.getAttribute('data-confirm') === '1') {
-      btn.setAttribute('data-confirm', '0');
-      btn.textContent = orig;
-      if (confirmTimers[btn.id]) clearTimeout(confirmTimers[btn.id]);
-      fn();
-      return;
-    }
-    btn.setAttribute('data-confirm', '1');
-    btn.textContent = '确认？';
-    if (confirmTimers[btn.id]) clearTimeout(confirmTimers[btn.id]);
-    confirmTimers[btn.id] = setTimeout(function () {
-      btn.setAttribute('data-confirm', '0');
-      btn.textContent = orig;
-    }, 2500);
-  }
-
   function bindEvents() {
     canvas.addEventListener('pointerup', onTap, { passive: true });
     canvas.addEventListener('touchend', onTap, { passive: true });
@@ -645,8 +615,8 @@
     canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
     btnUndo.addEventListener('click', doUndo);
-    btnNew.addEventListener('click', function () { confirmFlow(btnNew, doNewGame); });
-    btnResign.addEventListener('click', function () { confirmFlow(btnResign, doResign); });
+    btnNew.addEventListener('click', doNewGame);
+    btnGhost.addEventListener('click', doGhost);
     btnSettings.addEventListener('click', openSettings);
 
     mClose.addEventListener('click', closeSettings);
@@ -656,7 +626,6 @@
     mModeDuel.addEventListener('click', function () { setMode('duel'); });
     mSideRed.addEventListener('click', function () { doSideApply(RED); });
     mSideBlack.addEventListener('click', function () { doSideApply(BLACK); });
-    mGhost.addEventListener('click', doGhost);
     mLogToggle.addEventListener('click', toggleLog);
 
     for (var i = 0; i < levelBtns.length; i++) {
@@ -678,7 +647,7 @@
     debugBox = $('debugBox');
     btnUndo = $('btnUndo');
     btnNew = $('btnNew');
-    btnResign = $('btnResign');
+    btnGhost = $('btnGhost');
     btnSettings = $('btnSettings');
     modal = $('settingsModal');
     modalBackdrop = $('modalBackdrop');
@@ -686,7 +655,6 @@
     mModeDuel = $('mModeDuel');
     mSideRed = $('mSideRed');
     mSideBlack = $('mSideBlack');
-    mGhost = $('mGhost');
     mLogToggle = $('mLogToggle');
     mClose = $('mClose');
     mGroupLevel = $('mGroupLevel');
@@ -709,6 +677,7 @@
     layout();
     redrawAll();
     save();
+    requestAnimationFrame(function () { layout(); redrawAll(); });
 
     if (game.over) log('上次对局已结束: ' + resultText(game.result));
 
