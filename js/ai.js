@@ -341,7 +341,7 @@
     var o = {
       board: new Int8Array(opts.board),
       turn: opts.turn || RED,
-      level: opts.level || 3,
+      level: opts.level || 1,
       token: opts.token || null
     };
     var ctrl = { cancelled: false };

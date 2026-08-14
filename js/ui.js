@@ -20,8 +20,8 @@
   var toastTimer = 0;   // 临时通知自动恢复定时器
   var aiFailSafe = 0;   // AI 卡死兜底定时器
 
-  var STATUS, capRed, capBlack, debugBox, btnUndo, btnNew, btnGhost, btnSettings;
-  var modal, modalBackdrop, mModeAI, mModeDuel, mSideRed, mSideBlack, mLogToggle, mClose;
+  var STATUS, capRed, capBlack, btnUndo, btnNew, btnGhost, btnSettings;
+  var modal, modalBackdrop, mModeAI, mModeDuel, mSideRed, mSideBlack, mClose;
   var mGroupLevel, mGroupSide;
   var levelBtns = [];
 
@@ -33,10 +33,6 @@
     if (DEBUG) console.log('[老叔] ' + s);
     logLines.push(line);
     if (logLines.length > 60) logLines.shift();
-    if (debugBox && !debugBox.hidden) {
-      debugBox.textContent = logLines.join('\n');
-      debugBox.scrollTop = debugBox.scrollHeight;
-    }
   }
   function errorLog() {
     log.apply(null, ['[错误]'].concat(Array.prototype.slice.call(arguments)));
@@ -44,6 +40,15 @@
   }
 
   function sideName(side) { return side === RED ? '红方' : '黑方'; }
+  // 状态栏用户友好文案: 底层技术参数(exit code/JSON/错误栈)只进 console, 不暴露给玩家
+  function friendlyError(reason) {
+    var r = String(reason || '');
+    if (/超时|中止|Abort|timed ?out/i.test(r)) return 'AI 思考超时(网络波动或云端繁忙)，请重试';
+    if (/^HTTP 5/i.test(r) || /5xx|500|502|503|504/.test(r)) return 'AI 服务繁忙，请稍后再试';
+    if (/fetch failed|network|网络|XHR|status 0/i.test(r)) return '网络连接失败，请检查网络后重试';
+    if (/move|bestmove|引擎|着法|云端|响应解析/i.test(r)) return 'AI 暂时无法走棋(云端繁忙)，请重试';
+    return 'AI 无响应，请重新走棋';
+  }
   function statusText(t) {
     STATUS.textContent = t;
     if (toastTimer) { clearTimeout(toastTimer); toastTimer = 0; }
@@ -58,7 +63,7 @@
   function freshGame() {
     var b = E.initialBoard();
     return {
-      mode: 'ai', level: 3, playerSide: RED,
+      mode: 'ai', level: 1, playerSide: RED,
       board: b, turn: RED,
       history: [], hashStack: [E.hashOfBoard(b)],
       captured: [[], []],
@@ -139,7 +144,7 @@
     var vw = window.innerWidth, vh = window.innerHeight;
     var appTop = $('app').getBoundingClientRect().top;
     var above = STATUS.getBoundingClientRect().bottom - appTop;
-    var below = capRed.offsetHeight + $('actionBar').offsetHeight + (debugBox && !debugBox.hidden ? debugBox.offsetHeight : 0) + 18;
+    var below = capRed.offsetHeight + $('actionBar').offsetHeight + 18;
     var availW = Math.max(240, vw - 16);
     var availH = Math.max(240, vh - above - below - 12);
     // 画布固有纵横比固定为 11 : 9 = (10行 + 双侧0.5格) : (8列 + 双侧0.5格)
@@ -352,7 +357,7 @@
       }
       return {
         mode: d.mode === 'duel' ? 'duel' : 'ai',
-        level: Math.max(1, Math.min(5, d.level || 3)),
+        level: Math.max(1, Math.min(5, d.level || 1)),
         playerSide: d.playerSide === BLACK ? BLACK : RED,
         board: new Int8Array(d.board),
         turn: d.turn === BLACK ? BLACK : RED,
@@ -391,7 +396,6 @@
       var lv = parseInt(levelBtns[i].getAttribute('data-level'), 10);
       setOn(levelBtns[i], game.level === lv);
     }
-    mLogToggle.textContent = (debugBox && !debugBox.hidden) ? '调试日志:开' : '调试日志:关';
   }
 
   function openSettings() {
@@ -429,7 +433,7 @@
       token.cancelled = true;
       aiThinking = false;
       aiToken = null;
-      aiError = 'AI 响应超时(云端冷启动或网络波动)，请重试';
+      aiError = 'AI 思考超时(网络波动或云端繁忙)，请重试';
       log('[错误] AI 兜底超时, 已强制恢复');
       redrawAll();
       setControls();
@@ -451,9 +455,9 @@
       aiToken = null;
       if (!res || !res.move) {
         var reason = err && err.message ? err.message : '引擎未返回着法';
-        var api = (typeof LAOSHUJI_API === 'string' && LAOSHUJI_API) ? LAOSHUJI_API : '/api/move';
-        errorLog('AI 请求失败: ' + reason + ' (API=' + api + ')');
-        aiError = /超时|中止/.test(reason) ? 'AI 响应超时(云端冷启动或网络波动)，请重试' : 'AI 无响应（' + reason + '），请重新走棋';
+        // 底层技术原因(HTTP码/exit code/failureReason)只记录到控制台, 状态栏仅显示友好提示
+        errorLog('AI 请求失败: ' + reason + ' (API=' + (typeof LAOSHUJI_API === 'string' && LAOSHUJI_API ? LAOSHUJI_API : '/api/move') + ')');
+        aiError = friendlyError(reason);
         redrawAll();
         setControls();
         return;
@@ -607,17 +611,6 @@
     toast('屏幕已刷新，残影已清除', 2500);
   }
 
-  function toggleLog() {
-    debugBox.hidden = !debugBox.hidden;
-    if (!debugBox.hidden) {
-      debugBox.textContent = logLines.join('\n');
-      debugBox.scrollTop = debugBox.scrollHeight;
-    }
-    layout();
-    redrawAll();
-    syncSettingsUI();
-  }
-
   function cancelAI() {
     if (aiToken) { aiToken.cancelled = true; aiToken = null; }
     if (aiFailSafe) { clearTimeout(aiFailSafe); aiFailSafe = 0; }
@@ -683,7 +676,6 @@
     mModeDuel.addEventListener('click', function () { setMode('duel'); });
     mSideRed.addEventListener('click', function () { doSideApply(RED); });
     mSideBlack.addEventListener('click', function () { doSideApply(BLACK); });
-    mLogToggle.addEventListener('click', toggleLog);
 
     for (var i = 0; i < levelBtns.length; i++) {
       levelBtns[i].addEventListener('click', function () {
@@ -701,7 +693,6 @@
     STATUS = $('status');
     capRed = $('capRed');
     capBlack = $('capBlack');
-    debugBox = $('debugBox');
     btnUndo = $('btnUndo');
     btnNew = $('btnNew');
     btnGhost = $('btnGhost');
@@ -712,7 +703,6 @@
     mModeDuel = $('mModeDuel');
     mSideRed = $('mSideRed');
     mSideBlack = $('mSideBlack');
-    mLogToggle = $('mLogToggle');
     mClose = $('mClose');
     mGroupLevel = $('mGroupLevel');
     mGroupSide = $('mGroupSide');

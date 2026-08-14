@@ -314,7 +314,7 @@ module.exports = async function handler(req, res) {
     return;
   }
   const fen = (url.searchParams.get('fen') || '').trim();
-  const level = parseInt(url.searchParams.get('level') || '3', 10);
+  const level = parseInt(url.searchParams.get('level') || '1', 10);
   console.log('[REQ] GET /api/move fen=' + fen + ' 长度=' + fen.length + ' level=' + level + ' UA=' + String((req.headers || {})['user-agent'] || '').slice(0, 80));
   if (!/^[kKrRnNbBaAcCpP0-9/]+ [wb] - - \d+ \d+$/.test(fen)) {
     console.error('[REQ] FEN 非法拒绝: ' + JSON.stringify(fen));

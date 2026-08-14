@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>老叔之家象棋</title>
-<link rel="stylesheet" href="css/style.css?v=2.10">
+<link rel="stylesheet" href="css/style.css?v=3.0">
 </head>
 <body>
 <div id="app">
@@ -33,7 +33,6 @@
     <button id="btnSettings" class="btn bigBtn">设置</button>
   </div>
 
-  <div id="debugBox" hidden></div>
 </div>
 
 <div id="settingsModal" class="modal" hidden>
@@ -52,9 +51,9 @@
     <div class="mGroup" id="mGroupLevel">
       <div class="mLabel">AI 难度</div>
       <div class="mBtns">
-        <button class="btn mSel" data-level="1">新手</button>
+        <button class="btn mSel on" data-level="1">新手</button>
         <button class="btn mSel" data-level="2">入门</button>
-        <button class="btn mSel on" data-level="3">中级</button>
+        <button class="btn mSel" data-level="3">中级</button>
         <button class="btn mSel" data-level="4">高级</button>
         <button class="btn mSel" data-level="5">大师</button>
       </div>
@@ -69,18 +68,11 @@
       <div class="mHint">切换执棋方将开启新的一局</div>
     </div>
 
-    <div class="mGroup">
-      <div class="mLabel">墨水屏</div>
-      <div class="mBtns">
-        <button id="mLogToggle" class="btn mSel">调试日志</button>
-      </div>
-    </div>
-
     <button id="mClose" class="btn mClose">关闭</button>
   </div>
 </div>
 
-<script src="js/ai.js?v=2.10"></script>
-<script src="js/ui.js?v=2.10"></script>
+<script src="js/ai.js?v=3.0"></script>
+<script src="js/ui.js?v=3.0"></script>
 </body>
 </html>
