@@ -161,6 +161,23 @@ canvas#board {
   color: #8a6d1a;
 }
 
+/* 发音调试行(真机排障: 引擎选择/完整URL/真实错误码, 上屏可见) */
+#voiceDebug {
+  display: block;
+  width: 100%;
+  margin-top: 3px;
+  padding-top: 3px;
+  border-top: 1px dashed #e0c86b;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #a07b4f;
+  word-break: break-all;
+}
+
+#voiceDebug[hidden] {
+  display: none;
+}
+
 #bookText {
   -webkit-flex: 1;
   flex: 1;

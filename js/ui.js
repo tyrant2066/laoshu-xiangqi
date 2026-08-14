@@ -579,47 +579,107 @@
     afterMove();
   }
 
-  // ===== 棋谱研习模式 =====
-  // 双轨发音: 墨案 X 等精简安卓系统常缺系统级 TTS 语音包(Web Speech API 不报错但无声),
-  // 原生 speechSynthesis 2.5s 内无 onstart 或报错时, 自动降级为在线 TTS 音频流
+  // ===== 棋谱研习模式 · 双轨发音(墨案 X 真机加固) =====
+  // 墨案 X 等精简安卓常缺系统 TTS 语音包(WebSpeech 不报错但无声), 或在线源被网络/CORS拦截:
+  // 1) WebSpeech 优先, onstart 2.5s 无声超时 / onerror / API 缺失时自动降级;
+  // 2) 在线音频多源轮换(有道→Google), play().catch 与 onerror 的真实错误对象上屏, 真机可排障。
   var audioPlayer = null;
+  var voiceDebug = null;
+  var voiceTries = 0;
+  var lastNotAllowedTip = 0;
+  var audioSources = [
+    { name: '有道TTS', build: function (t) { return 'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(t) + '&le=zh'; } },
+    { name: 'GoogleTTS', build: function (t) { return 'https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=zh-CN&q=' + encodeURIComponent(t); } }
+  ];
+  function voiceDebugLog(msg) {
+    try {
+      if (!voiceDebug) { voiceDebug = $('voiceDebug'); }
+      if (voiceDebug) { voiceDebug.hidden = false; voiceDebug.textContent = '发音调试: ' + msg; }
+    } catch (e) {}
+    log('[语音] ' + msg);
+  }
   function playOnlineTTS(text) {
+    var txt = String(text);
     try {
       if (window.speechSynthesis) { try { speechSynthesis.cancel(); } catch (e) {} }
+      if (voiceTries >= audioSources.length * 2) {
+        voiceTries = 0;
+        voiceDebugLog('[AudioFallback] ' + audioSources.length + '个在线源连续失败, 已暂停自动重试(请检查网络后点「🔊 听讲解」)');
+        return;
+      }
+      var src = audioSources[voiceTries % audioSources.length];
+      voiceTries++;
+      var url = src.build(txt);
+      voiceDebugLog('[AudioFallback] 源=' + src.name + ' URL=' + url.slice(0, 140));
       if (!audioPlayer) {
         audioPlayer = new Audio();
-        audioPlayer.preload = 'none';
+        audioPlayer.preload = 'auto';
+        audioPlayer.volume = 1;
+        audioPlayer.muted = false;
       }
-      audioPlayer.src = 'https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=zh-CN&q=' + encodeURIComponent(String(text));
-      audioPlayer.play().catch(function () {
-        log('在线语音播放被浏览器拦截(需用户操作后), 已降级为文字讲解');
+      audioPlayer.onerror = function () {
+        var ec = audioPlayer.error ? audioPlayer.error.code : '?';
+        var em = audioPlayer.error ? audioPlayer.error.message : '';
+        voiceDebugLog('[AudioFallback] 源=' + src.name + ' 加载失败(error.code=' + ec + ' ' + em + '), 尝试下一源');
+        playOnlineTTS(txt);
+      };
+      audioPlayer.src = url;
+      audioPlayer.play().then(function () {
+        var round = voiceTries;
+        voiceTries = 0;
+        voiceDebugLog('[AudioFallback] 源=' + src.name + ' 播放开始(第' + round + '次尝试成功)');
+      }).catch(function (err) {
+        var name = (err && err.name) || 'UnknownError';
+        var msg = (err && err.message) || '';
+        if (name === 'NotAllowedError' || msg.indexOf('not allowed') >= 0 || msg.indexOf('user gesture') >= 0) {
+          // 自动播放策略拦截(非用户手势场景): 换源无效, 提示后等用户手势重试
+          if (Date.now() - lastNotAllowedTip > 15000) {
+            lastNotAllowedTip = Date.now();
+            voiceDebugLog('[AudioFallback] 自动播放被拦截 ' + name + ': ' + msg + ' —— 请先点击「🔊 听讲解」按钮解锁');
+          }
+        } else {
+          voiceDebugLog('[AudioFallback] 播放失败 ' + name + ': ' + msg + ', 尝试下一源');
+          playOnlineTTS(txt);
+        }
       });
     } catch (e) {
-      errorLog('在线语音播放失败, 已降级为文字讲解', e);
+      voiceDebugLog('[AudioFallback] 播放异常: ' + (e && e.message ? e.message : String(e)));
     }
   }
   function speak(text) {
-    if (!speakOn) return;
+    if (!speakOn) {
+      voiceDebugLog('语音开关已关闭, 请在设置里打开「语音讲解」');
+      return;
+    }
     var txt = String(text);
     try {
       if (window.speechSynthesis && window.SpeechSynthesisUtterance) {
+        var voices = [];
+        try { voices = window.speechSynthesis.getVoices() || []; } catch (e) {}
+        voiceDebugLog('[WebSpeech] 原生语音: 可用voice=' + voices.length + '个, 等待发声确认');
         speechSynthesis.cancel();
         var u = new SpeechSynthesisUtterance(txt);
         u.lang = 'zh-CN';
         u.rate = 0.95;
         var fallbackTimer = setTimeout(function () {
           // 原生 TTS 无声(2.5s 未开始发声): 墨案 X 等无语音包设备自动降级
-          log('原生 TTS 无声(超时), 自动降级为在线语音');
+          voiceDebugLog('[WebSpeech] 2.5s无声超时(onstart未触发), 自动降级在线语音');
           playOnlineTTS(txt);
         }, 2500);
-        u.onstart = function () { clearTimeout(fallbackTimer); };
+        u.onstart = function () { clearTimeout(fallbackTimer); voiceDebugLog('[WebSpeech] 已发声(onstart)'); };
         u.onend = function () { clearTimeout(fallbackTimer); };
-        u.onerror = function () { clearTimeout(fallbackTimer); playOnlineTTS(txt); };
+        u.onerror = function (ev) {
+          clearTimeout(fallbackTimer);
+          var em = (ev && ev.error) ? String(ev.error) : '未知';
+          voiceDebugLog('[WebSpeech] 出错(' + em + '), 降级在线语音');
+          playOnlineTTS(txt);
+        };
         speechSynthesis.speak(u);
         return;
       }
+      voiceDebugLog('[AudioFallback] 原生 WebSpeech 不可用, 直接在线语音');
     } catch (e) {
-      errorLog('原生语音不可用, 降级为在线语音', e);
+      voiceDebugLog('[AudioFallback] 原生语音异常(' + (e && e.message ? e.message : String(e)) + '), 降级在线语音');
     }
     playOnlineTTS(txt);
   }
