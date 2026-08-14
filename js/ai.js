@@ -332,6 +332,11 @@
     return '/api/move';
   }
 
+  /* 请求容错升级: 自动重试对抗 Wi-Fi 休眠/弱网
+     - 可重试类: 网络错误 / 断连 / 超时 / HTTP 5xx(瞬时抖动)
+     - 重试 3 次, 每次间隔 1s(等待 Wi-Fi 唤醒); 前 1 次尝试 20s(兼容云端冷启动), 后续 8s
+     - 最终失败透传最底层真实原因(status code / network error detail), 不笼统写"超时"
+     - 全程配合 token.cancelled, 取消后不再重试 */
   function getBestMove(opts, done) {
     var o = {
       board: new Int8Array(opts.board),
@@ -346,92 +351,140 @@
     var url = endpoint() + '?fen=' + encodeURIComponent(boardToFEN(o.board, o.turn)) + '&level=' + o.level;
     url += '&_t=' + Date.now();
     var t0 = nowMs();
-    var abort = null;
-    var settled = false;
-    function finishNull() {
-      if (settled) return;
-      settled = true;
-      done(null);
+    var MAX_ATTEMPTS = 3, RETRY_DELAY = 1000;
+    var attemptNo = 0;
+    var owner = null;       // 当前尝试的可取消句柄
+    var sleeping = false;   // 处于重试间隔
+    var finished = false;
+
+    function finish(res, err) {
+      if (finished) return;
+      finished = true;
+      done(res, err ? err : null);
     }
-    // 现代浏览器: fetch + AbortController 超时控制
-    // 老旧内核(Via/旧WebView 无 AbortController): 自动降级 XHR, 其原生 timeout 100% 兼容
-    if (typeof fetch === 'function' && typeof AbortController !== 'undefined') {
-      abort = new AbortController();
-      var timer = setTimeout(function () {
-        if (!cancelled()) { try { abort.abort(); } catch (e) {} }
-      }, 20000);
-      fetch(url, { signal: abort.signal, cache: 'no-store' })
-        .then(function (res) {
-          if (!res.ok) throw new Error('HTTP ' + res.status);
-          return res.json();
-        })
-        .then(function (data) {
-          clearTimeout(timer);
-          if (cancelled() || settled) return;
-          settled = true;
-          if (!data || !data.move || typeof data.move.f !== 'number' || typeof data.move.t !== 'number') {
-            done(null, new Error('响应缺少 move 字段')); return;
-          }
-          done({
-            move: { f: data.move.f, t: data.move.t },
-            depth: data.depth || 0,
-            nodes: data.nodes || 0,
-            ms: data.ms || (nowMs() - t0),
-            score: typeof data.score === 'number' ? data.score : 0
+
+    function buildMove(data) {
+      return {
+        move: { f: data.move.f, t: data.move.t },
+        depth: data.depth || 0,
+        nodes: data.nodes || 0,
+        ms: data.ms || (nowMs() - t0),
+        score: typeof data.score === 'number' ? data.score : 0
+      };
+    }
+
+    function onAttempt(res, err) {
+      if (finished) return;
+      if (err === null && res) { finish(buildMove(res), null); return; }
+      if (err === null && !res) { finish(null, null); return; } // 被取消
+      var reason = err.err || err;
+      if (!err.retry) { finish(null, reason); return; }
+      attemptNo++;
+      if (attemptNo >= MAX_ATTEMPTS) {
+        console.log('[AI] 已自动重试 ' + MAX_ATTEMPTS + ' 次仍失败, 最终错误: ' + reason.message);
+        finish(null, reason);
+        return;
+      }
+      console.log('[AI] 第 ' + attemptNo + ' 次尝试失败(' + reason.message + '), ' + RETRY_DELAY + 'ms 后自动重试第 ' + (attemptNo + 1) + ' 次');
+      sleeping = true;
+      setTimeout(run, RETRY_DELAY);
+    }
+
+    function attemptOnce(ms) {
+      var handled = false;
+      function doneOnce(res, err) {
+        if (handled) return;
+        handled = true;
+        onAttempt(res, err);
+      }
+      function parseData(data) {
+        if (data && data.move && typeof data.move.f === 'number' && typeof data.move.t === 'number') doneOnce(data, null);
+        else doneOnce(null, { retry: false, err: new Error('响应缺少 move 字段') });
+      }
+
+      // 现代浏览器: fetch + AbortController(有 abort 支持)
+      if (typeof fetch === 'function' && typeof AbortController !== 'undefined') {
+        var abort;
+        try { abort = new AbortController(); } catch (e) { abort = null; }
+        if (!abort) { doneOnce(null, { retry: false, err: new Error('AbortController 初始化失败') }); return; }
+        owner = { abort: function () { try { abort.abort(); } catch (e) {} } };
+        var timer = setTimeout(function () {
+          if (!cancelled()) { try { abort.abort(); } catch (e) {} }
+        }, ms);
+        fetch(url, { signal: abort.signal, cache: 'no-store' })
+          .then(function (res) {
+            clearTimeout(timer);
+            if (cancelled()) { doneOnce(null, null); return; }
+            if (!res.ok) {
+              doneOnce(null, { retry: res.status >= 500, err: new Error('HTTP ' + res.status), status: res.status });
+              return;
+            }
+            return res.json().then(parseData, function (e) {
+              doneOnce(null, { retry: false, err: e instanceof Error ? e : new Error('响应解析失败: ' + String(e)) });
+            });
+          })
+          .catch(function (err) {
+            clearTimeout(timer);
+            if (cancelled()) { doneOnce(null, null); return; }
+            if (err && err.name === 'AbortError') {
+              doneOnce(null, { retry: true, err: new Error('请求超时(' + ms + 'ms, 第' + (attemptNo + 1) + '次尝试)') });
+              return;
+            }
+            // fetch 网络层错误(TypeError: "Failed to fetch" 等浏览器原生最底层信息)透传
+            doneOnce(null, { retry: true, err: (err && err.message) ? err : new Error(String(err)) });
           });
-        })
-        .catch(function (err) {
-          clearTimeout(timer);
-          if (cancelled() || settled) return;
-          settled = true;
-          if (err && err.name === 'AbortError') { done(null, new Error('请求超时(20秒)')); return; }
-          done(null, err instanceof Error ? err : new Error('请求失败: ' + String(err)));
-        });
-    } else {
+        return;
+      }
+
+      // 老旧内核(Via/旧WebView 无 AbortController): 降级 XHR, 原生 timeout 100% 兼容
       var xhr = null;
-      var timer2 = null;
       try {
         xhr = new XMLHttpRequest();
-        xhr.open('GET', url, true);
-        xhr.timeout = 20000;
-        xhr.setRequestHeader('Cache-Control', 'no-cache, no-store');
-        xhr.onreadystatechange = function () {
-          if (xhr.readyState !== 4 || cancelled() || settled) return;
-          clearTimeout(timer2);
-          settled = true;
-          if (xhr.status < 200 || xhr.status >= 300) {
-            done(null, new Error('HTTP ' + xhr.status));
-            return;
-          }
-          var data = null;
-          try { data = JSON.parse(xhr.responseText); } catch (e) {}
-          if (data && data.move && typeof data.move.f === 'number') {
-            done({ move: { f: data.move.f, t: data.move.t }, depth: data.depth || 0, nodes: data.nodes || 0, ms: data.ms || (nowMs() - t0), score: typeof data.score === 'number' ? data.score : 0 });
-          } else {
-            done(null, new Error('响应解析失败或缺少 move 字段'));
-          }
-        };
-        xhr.onabort = function () {
-          clearTimeout(timer2);
-          if (!cancelled() && !settled) { settled = true; done(null, new Error('请求被中止(超时?)')); }
-        };
-        xhr.onerror = function () {
-          clearTimeout(timer2);
-          if (!cancelled() && !settled) { settled = true; done(null, new Error('网络错误(XHR)')); }
-        };
-        xhr.ontimeout = function () {
-          if (!cancelled() && !settled) { settled = true; done(null, new Error('请求超时(20秒)')); }
-        };
-        xhr.send();
-        timer2 = setTimeout(function () { try { xhr.abort(); } catch (e) {} }, 20000);
       } catch (e) {
-        done(null, e instanceof Error ? e : new Error('发起请求异常: ' + String(e)));
+        doneOnce(null, { retry: false, err: e instanceof Error ? e : new Error('XMLHttpRequest 不可用') });
+        return;
       }
+      owner = { abort: function () { try { xhr.abort(); } catch (e) {} } };
+      xhr.open('GET', url, true);
+      xhr.timeout = ms;
+      xhr.setRequestHeader('Cache-Control', 'no-cache, no-store');
+      xhr.onreadystatechange = function () {
+        if (xhr.readyState !== 4 || (cancelled() && handled)) return;
+        if (cancelled()) { doneOnce(null, null); return; }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          var data = null;
+          try { data = JSON.parse(xhr.responseText); } catch (e) { data = null; }
+          parseData(data);
+        } else {
+          doneOnce(null, { retry: xhr.status >= 500, err: new Error('HTTP ' + xhr.status), status: xhr.status });
+        }
+      };
+      xhr.onabort = function () {
+        if (cancelled()) { doneOnce(null, null); return; }
+        doneOnce(null, { retry: true, err: new Error('请求被中止(超时?)') });
+      };
+      xhr.onerror = function () {
+        if (cancelled()) { doneOnce(null, null); return; }
+        doneOnce(null, { retry: true, err: new Error('网络错误(XHR, status=' + xhr.status + ')') });
+      };
+      xhr.ontimeout = function () {
+        if (cancelled()) { doneOnce(null, null); return; }
+        doneOnce(null, { retry: true, err: new Error('请求超时(' + ms + 'ms, 第' + (attemptNo + 1) + '次尝试)') });
+      };
+      xhr.send();
     }
+
+    function run() {
+      sleeping = false;
+      if (cancelled()) { finish(null, null); return; }
+      var ms = attemptNo === 0 ? 20000 : 8000;
+      attemptOnce(ms);
+    }
+    run();
+
     return { cancel: function () {
       ctrl.cancelled = true;
-      if (abort) { try { abort.abort(); } catch (e) {} }
-      if (xhr) { try { xhr.abort(); } catch (e) {} }
+      if (owner) { try { owner.abort(); } catch (e) {} }
     } };
   }
 
