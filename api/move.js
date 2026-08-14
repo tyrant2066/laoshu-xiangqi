@@ -64,6 +64,11 @@ function runEngine(fen, ms, hardTimeout) {
   return new Promise((resolve) => {
     let child;
     try {
+      if (!fs.existsSync(ENGINE)) {
+        console.error('引擎二进制不存在:', ENGINE);
+        resolve(null);
+        return;
+      }
       child = spawn(ENGINE, [], { stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (e) {
       console.error('引擎启动崩溃:', e);
@@ -72,11 +77,13 @@ function runEngine(fen, ms, hardTimeout) {
     }
     let done = false;
     let buf = '';
+    let errBuf = '';
     let best = null;
     let lastDepth = 0, lastScore = 0, nodes = 0;
     let goSentAt = 0;
     const t0 = Date.now();
     let waiter = null;
+    let exitInfo = null;
 
     const killTimer = setTimeout(finalize, Math.max(1000, hardTimeout));
 
@@ -87,6 +94,11 @@ function runEngine(fen, ms, hardTimeout) {
       if (waiter) { clearTimeout(waiter.timer); waiter = null; }
       try { child.stdin && child.stdin.end(); } catch (e) {}
       try { child.kill('SIGKILL'); } catch (e) {}
+      if (!best) {
+        const errTail = errBuf.replace(/\s+$/, '').split('\n').slice(-8).join('\n').slice(-1200);
+        if (errTail) console.error('引擎提前退出, stderr 尾部:', '\n' + errTail);
+        if (exitInfo) console.error('引擎进程退出: code=' + exitInfo.code + ' signal=' + exitInfo.signal);
+      }
       resolve({ best, depth: lastDepth, score: lastScore, nodes, ms: goSentAt ? Date.now() - goSentAt : Date.now() - t0 });
     }
 
@@ -129,10 +141,22 @@ function runEngine(fen, ms, hardTimeout) {
       }
     });
     child.stdout && child.stdout.on('end', finalize);
-    child.on('exit', finalize);
-    child.on('error', finalize);
+    child.stdout && child.stdout.on('error', e => { if (!done) console.error('引擎 stdout 错误:', e && e.code, e && e.message); });
+    child.stderr && child.stderr.setEncoding('utf8');
+    child.stderr && child.stderr.on('data', d => { errBuf = (errBuf + d).slice(-8000); });
+    child.stderr && child.stderr.on('error', e => { if (!done) console.error('引擎 stderr 错误:', e && e.code, e && e.message); });
+    child.stdin && child.stdin.on('error', e => { if (!done) console.error('引擎 stdin 异步错误:', e && e.code, e && e.message); });
+    child.on('exit', (code, signal) => { exitInfo = { code: code, signal: signal }; finalize(); });
+    child.on('error', e => { console.error('引擎进程错误:', e); exitInfo = { code: 'ERROR', signal: e && e.code }; finalize(); });
 
-    const send = s => { try { child.stdin && child.stdin.write(s + '\n'); } catch (e) {} };
+    const send = s => {
+      try {
+        if (child.stdin && !child.stdin.destroyed && child.stdin.writable) child.stdin.write(s + '\n');
+        else if (!done) console.error('引擎 stdin 不可写, 指令被丢弃: ' + s);
+      } catch (e) {
+        if (!done) console.error('引擎 stdin 写入同步异常:', e);
+      }
+    };
 
     (async () => {
       try {
