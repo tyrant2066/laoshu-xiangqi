@@ -1,20 +1,20 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8">
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>鑰佸彅涔嬪璞℃</title>
+<title>老叔之家象棋</title>
 <link rel="stylesheet" href="css/style.css?v=2.3">
 </head>
 <body>
 <div id="app">
   <header>
-    <span id="logo">鑰佸彅涔嬪璞℃</span>
-    <span id="status">娆㈣繋鏉ュ埌鑰佸彅涔嬪璞℃</span>
+    <span id="logo">老叔之家象棋</span>
+    <span id="status">欢迎来到老叔之家象棋</span>
   </header>
 
   <div id="boardWrap">
@@ -22,15 +22,15 @@
   </div>
 
   <div id="captured">
-    <span id="capRed" class="capLine">绾㈡柟鍚冨瓙锛氾紙鏃狅級</span>
-    <span id="capBlack" class="capLine">榛戞柟鍚冨瓙锛氾紙鏃狅級</span>
+    <span id="capRed" class="capLine">红方吃子：（无）</span>
+    <span id="capBlack" class="capLine">黑方吃子：（无）</span>
   </div>
 
   <div id="actionBar" class="bar">
-    <button id="btnNew" class="btn bigBtn">寮€濮?/button>
-    <button id="btnUndo" class="btn bigBtn">鎮旀</button>
-    <button id="btnGhost" class="btn bigBtn">鍒锋柊</button>
-    <button id="btnSettings" class="btn bigBtn">璁剧疆</button>
+    <button id="btnNew" class="btn bigBtn">开始</button>
+    <button id="btnUndo" class="btn bigBtn">悔棋</button>
+    <button id="btnGhost" class="btn bigBtn">刷新</button>
+    <button id="btnSettings" class="btn bigBtn">设置</button>
   </div>
 
   <div id="debugBox" hidden></div>
@@ -39,44 +39,44 @@
 <div id="settingsModal" class="modal" hidden>
   <div class="modalBackdrop" id="modalBackdrop"></div>
   <div class="modalPanel" role="dialog" aria-modal="true">
-    <h2>璁剧疆</h2>
+    <h2>设置</h2>
 
     <div class="mGroup" id="mGroupMode">
-      <div class="mLabel">瀵规垬妯″紡</div>
+      <div class="mLabel">对战模式</div>
       <div class="mBtns">
-        <button id="mModeAI" class="btn mSel on">浜烘満瀵规垬</button>
-        <button id="mModeDuel" class="btn mSel">鍙屼汉鍚屽睆</button>
+        <button id="mModeAI" class="btn mSel on">人机对战</button>
+        <button id="mModeDuel" class="btn mSel">双人同屏</button>
       </div>
     </div>
 
     <div class="mGroup" id="mGroupLevel">
-      <div class="mLabel">AI 闅惧害</div>
+      <div class="mLabel">AI 难度</div>
       <div class="mBtns">
-        <button class="btn mSel" data-level="1">鏂版墜</button>
-        <button class="btn mSel" data-level="2">鍏ラ棬</button>
-        <button class="btn mSel on" data-level="3">涓骇</button>
-        <button class="btn mSel" data-level="4">楂樼骇</button>
-        <button class="btn mSel" data-level="5">澶у笀</button>
+        <button class="btn mSel" data-level="1">新手</button>
+        <button class="btn mSel" data-level="2">入门</button>
+        <button class="btn mSel on" data-level="3">中级</button>
+        <button class="btn mSel" data-level="4">高级</button>
+        <button class="btn mSel" data-level="5">大师</button>
       </div>
     </div>
 
     <div class="mGroup" id="mGroupSide">
-      <div class="mLabel">鎵ф鏂?/div>
+      <div class="mLabel">执棋方</div>
       <div class="mBtns">
-        <button id="mSideRed" class="btn mSel on">鎴戞墽绾?/button>
-        <button id="mSideBlack" class="btn mSel">鎴戞墽榛?/button>
+        <button id="mSideRed" class="btn mSel on">我执红</button>
+        <button id="mSideBlack" class="btn mSel">我执黑</button>
       </div>
-      <div class="mHint">鍒囨崲鎵ф鏂瑰皢寮€鍚柊鐨勪竴灞€</div>
+      <div class="mHint">切换执棋方将开启新的一局</div>
     </div>
 
     <div class="mGroup">
-      <div class="mLabel">澧ㄦ按灞?/div>
+      <div class="mLabel">墨水屏</div>
       <div class="mBtns">
-        <button id="mLogToggle" class="btn mSel">璋冭瘯鏃ュ織</button>
+        <button id="mLogToggle" class="btn mSel">调试日志</button>
       </div>
     </div>
 
-    <button id="mClose" class="btn mClose">鍏抽棴</button>
+    <button id="mClose" class="btn mClose">关闭</button>
   </div>
 </div>
 
