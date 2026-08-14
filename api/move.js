@@ -20,7 +20,8 @@ const NNUE_URL = (process.env.NNUE_URL || '').trim();
 const LEVEL_MS = { 1: 250, 2: 450, 3: 700, 4: 1000, 5: 1500 };
 const SEARCH_MS_CAP = 1500;
 const NET_BUDGET = 6000;      // NNUE 下载总预算: 并行执行, 超时即降级经典评估
-const ENGINE_BUDGET = 7000;   // 引擎从 spawn 到返回的硬上限
+const ENGINE_BUDGET = 7000;   // 引擎 spawn..go 前的握手阶段预算(下载+uciok+readyok)
+const KILL_GRACE = 3000;      // go 之后给引擎输出 bestmove 的宽限: movetime 到期即出, 多留 3s 防慢局面误杀
 const NNUE_MIN_BYTES = 10000000;
 
 // /tmp 权重文件进程级缓存标志: 一旦就绪, 本实例内永不重复下载/重复 stat
@@ -145,7 +146,14 @@ function runEngine(fen, ms, hardTimeout, netP) {
     let exitLogged = false;
     let weKilled = false;
 
-    const killTimer = setTimeout(finalize, Math.max(1000, hardTimeout));
+    let killTimer = setTimeout(finalize, Math.max(1000, hardTimeout + KILL_GRACE)); // 握手阶段(下载+uciok+readyok)也带宽限
+
+    // 动态重设强杀时刻: 永远满足 go 已给的计算时间 + KILL_GRACE 宽限,
+    // 绝不在引擎 movetime 尚未到期的时刻误杀
+    function scheduleKill(deadline) {
+      clearTimeout(killTimer);
+      killTimer = setTimeout(finalize, Math.max(1000, deadline - Date.now()));
+    }
 
     function finalize() {
       if (done) return;
@@ -275,10 +283,13 @@ function runEngine(fen, ms, hardTimeout, netP) {
         await waitFor('readyok', 3000);
         if (done) return;
         const elapsed = Date.now() - t0;
-        const budgetLeft = hardTimeout - elapsed - 1500;
-        const useGoMs = Math.max(100, Math.min(Math.min(ms, SEARCH_MS_CAP), budgetLeft));
+        // go 的 movetime 绝不被剩余预算缩水: 先给足档位时间, 强杀时刻随 go 动态后移
+        const useGoMs = Math.max(100, Math.min(ms, SEARCH_MS_CAP));
         goSentAt = Date.now();
-        console.log('[UCI] net=' + (netInfo ? netInfo.mode : 'none') + ' fen=' + fen.slice(0, 90) + ' -> go movetime ' + useGoMs);
+        // 强杀 deadline = max(握手预留下限, go后计算时间+宽限); 确保引擎 movetime 内不可能被杀
+        const deadline = Math.max(t0 + ENGINE_BUDGET + KILL_GRACE, goSentAt + useGoMs + KILL_GRACE);
+        scheduleKill(deadline);
+        console.log('[UCI] net=' + (netInfo ? netInfo.mode : 'none') + ' fen=' + fen.slice(0, 90) + ' -> go movetime ' + useGoMs + ' 强杀时刻=+' + (deadline - t0) + 'ms');
         send('go movetime ' + useGoMs);
       } catch (e) {
         finalize();
