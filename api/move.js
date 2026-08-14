@@ -14,10 +14,13 @@ const ENGINE_DIR = path.dirname(ENGINE);
 const LIB_DIR = path.join(ENGINE_DIR, 'libatomic');
 const NNUE = process.env.PIKAFISH_NNUE ? path.join(process.env.PIKAFISH_NNUE) : '/tmp/pikafish.nnue';
 const NNUE_URL = process.env.NNUE_URL || '';
-const LEVEL_MS = { 1: 400, 2: 800, 3: 1500, 4: 2500, 5: 4800 };
-const SEARCH_MS_CAP = 4800;
-const TOTAL_BUDGET = 8500;
+const LEVEL_MS = { 1: 250, 2: 450, 3: 700, 4: 1000, 5: 1500 };
+const SEARCH_MS_CAP = 1500;
+const TOTAL_BUDGET = 5000;
 const NET_TIMEOUT = 8000;
+
+// /tmp 权重文件进程级缓存标志: 一旦就绪, 本实例内永不重复下载/重复 stat
+let netReady = false;
 
 function engineEnv() {
   const e = Object.assign({}, process.env);
@@ -48,7 +51,12 @@ function uciToSq(moveStr) {
 
 async function downloadNet() {
   if (!NNUE_URL) return true;
-  if (fs.existsSync(NNUE) && fs.statSync(NNUE).size > 10000000) return true;
+  if (netReady) return true;
+  if (fs.existsSync(NNUE) && fs.statSync(NNUE).size > 10000000) {
+    netReady = true;
+    console.log('NNUE 缓存命中, 直接复用:', NNUE);
+    return true;
+  }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), NET_TIMEOUT);
   try {
@@ -60,6 +68,8 @@ async function downloadNet() {
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.length < 10000000) return false;
     fs.writeFileSync(NNUE, buf, { mode: 0o644 });
+    netReady = true;
+    console.log('NNUE 下载完成:', NNUE, buf.length, 'bytes');
     return true;
   } catch (e) {
     console.error('NNUE 下载网络/超时报错:', e);
