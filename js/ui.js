@@ -164,12 +164,7 @@
       }
     }
     for (var r = 0; r <= 9; r++) {
-      if (r === 4 || r === 5) {
-        ctx.moveTo(gx(0), gy(r)); ctx.lineTo(gx(3), gy(r));
-        ctx.moveTo(gx(5), gy(r)); ctx.lineTo(gx(8), gy(r));
-      } else {
-        ctx.moveTo(gx(0), gy(r)); ctx.lineTo(gx(8), gy(r));
-      }
+      ctx.moveTo(gx(0), gy(r)); ctx.lineTo(gx(8), gy(r));
     }
     ctx.stroke();
     ctx.beginPath();

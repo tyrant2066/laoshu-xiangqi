@@ -44,12 +44,16 @@ async function downloadNet() {
   const timer = setTimeout(() => ctrl.abort(), NET_TIMEOUT);
   try {
     const res = await fetch(NNUE_URL, { redirect: 'follow', signal: ctrl.signal });
-    if (!res.ok) return false;
+    if (!res.ok) {
+      console.error('NNUE 下载状态异常:', res.status);
+      return false;
+    }
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.length < 10000000) return false;
     fs.writeFileSync(NNUE, buf, { mode: 0o644 });
     return true;
   } catch (e) {
+    console.error('NNUE 下载网络/超时报错:', e);
     return false;
   } finally {
     clearTimeout(timer);
@@ -63,6 +67,7 @@ function runEngine(fen, ms, hardTimeout) {
       fs.chmodSync(ENGINE, 0o755);
       child = spawn(ENGINE, [], { stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (e) {
+      console.error('引擎启动崩溃:', e);
       resolve(null);
       return;
     }
