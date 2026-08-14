@@ -64,7 +64,6 @@ function runEngine(fen, ms, hardTimeout) {
   return new Promise((resolve) => {
     let child;
     try {
-      fs.chmodSync(ENGINE, 0o755);
       child = spawn(ENGINE, [], { stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (e) {
       console.error('引擎启动崩溃:', e);
