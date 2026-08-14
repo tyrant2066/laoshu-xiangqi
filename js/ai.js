@@ -353,7 +353,9 @@
       settled = true;
       done(null);
     }
-    if (typeof fetch === 'function') {
+    // 现代浏览器: fetch + AbortController 超时控制
+    // 老旧内核(Via/旧WebView 无 AbortController): 自动降级 XHR, 其原生 timeout 100% 兼容
+    if (typeof fetch === 'function' && typeof AbortController !== 'undefined') {
       abort = new AbortController();
       var timer = setTimeout(function () {
         if (!cancelled()) { try { abort.abort(); } catch (e) {} }
@@ -426,7 +428,11 @@
         done(null, e instanceof Error ? e : new Error('发起请求异常: ' + String(e)));
       }
     }
-    return { cancel: function () { ctrl.cancelled = true; if (abort) { try { abort.abort(); } catch (e) {} } } };
+    return { cancel: function () {
+      ctrl.cancelled = true;
+      if (abort) { try { abort.abort(); } catch (e) {} }
+      if (xhr) { try { xhr.abort(); } catch (e) {} }
+    } };
   }
 
   global.XQEngine = {
