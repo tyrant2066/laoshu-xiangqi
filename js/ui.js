@@ -421,18 +421,19 @@
     var token = { cancelled: false };
     aiToken = token;
     if (aiFailSafe) { clearTimeout(aiFailSafe); aiFailSafe = 0; }
-    // 兜底保险: 8 秒内无论如何完成回调, 绝不让状态停留在"AI 思考中…"
+    // 兜底保险: 25 秒内无论如何完成回调, 绝不让状态停留在"AI 思考中…"
+    // (请求超时已放宽到 20s 以兼容云端冷启动, 兜底必须略大于请求超时)
     aiFailSafe = setTimeout(function () {
       aiFailSafe = 0;
       if (token.cancelled || !aiThinking) return;
       token.cancelled = true;
       aiThinking = false;
       aiToken = null;
-      aiError = 'AI 响应超时，请重新走棋';
+      aiError = 'AI 响应超时(云端冷启动中)，请重试';
       log('[错误] AI 兜底超时, 已强制恢复');
       redrawAll();
       setControls();
-    }, 8000);
+    }, 25000);
     setControls();
     updateStatus();
     log('AI 开始思考: level=' + game.level + ' (' + E.LEVELS[game.level - 1].name + ') 执' + (game.turn === RED ? '红' : '黑'));
@@ -452,7 +453,7 @@
         var reason = err && err.message ? err.message : '引擎未返回着法';
         var api = (typeof LAOSHUJI_API === 'string' && LAOSHUJI_API) ? LAOSHUJI_API : '/api/move';
         errorLog('AI 请求失败: ' + reason + ' (API=' + api + ')');
-        aiError = 'AI 无响应（' + reason + '），请重新走棋';
+        aiError = /超时|中止/.test(reason) ? 'AI 响应超时(云端冷启动中)，请重试' : 'AI 无响应（' + reason + '），请重新走棋';
         redrawAll();
         setControls();
         return;
@@ -637,10 +638,15 @@
   }
 
   function bindEvents() {
-    canvas.addEventListener('pointerup', onTap, { passive: true });
+    // 移动端优先: touchstart 点按即响应 + 阻止滚动/缩放, 滑动不再吞点击
+    canvas.addEventListener('touchstart', function (e) {
+      e.preventDefault();
+      onTap(e);
+    }, { passive: false });
+    canvas.addEventListener('touchmove', function (e) { e.preventDefault(); }, { passive: false });
     canvas.addEventListener('touchend', onTap, { passive: true });
+    canvas.addEventListener('pointerup', onTap, { passive: true });
     canvas.addEventListener('click', onTap);
-    canvas.addEventListener('touchstart', function (e) { e.preventDefault(); }, { passive: false });
     canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
     btnUndo.addEventListener('click', doUndo);

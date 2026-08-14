@@ -97,6 +97,10 @@ button[hidden] {
 #boardWrap {
   text-align: center;
   margin: 2px 0 4px;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 canvas#board {
