@@ -518,9 +518,16 @@
   }
 
   function tapPos(e) {
-    if (e.clientX !== undefined) return { x: e.clientX, y: e.clientY };
+    // 触摸: TouchEvent 无 clientX, 且 touchend 时 touches 为空 -> 优先取 changedTouches
     var t = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]);
-    return t ? { x: t.clientX, y: t.clientY } : null;
+    if (t && typeof t.clientX === 'number') return { x: t.clientX, y: t.clientY };
+    if (typeof e.clientX === 'number') return { x: e.clientX, y: e.clientY };
+    // 极老内核兜底: offsetX 是相对 target 的偏移, 需加上画布原点换算为 clientX
+    if (typeof e.offsetX === 'number') {
+      var r0 = canvas.getBoundingClientRect();
+      return { x: r0.left + e.offsetX, y: r0.top + e.offsetY };
+    }
+    return null;
   }
 
   function onTap(e) {
@@ -639,15 +646,29 @@
   }
 
   function bindEvents() {
-    // 移动端优先: touchstart 点按即响应 + 阻止滚动/缩放, 滑动不再吞点击
+    // 手势入口统一(解决触摸三连触发): 一次触摸会依次派发 touchstart -> touchend -> click(合成)
+    // 只允许手势起点(touchstart)执行, 800ms 内的 touchend/pointerup/click 一律按"同一次手势"丢弃
+    // 桌面鼠标只有 click, 不受影响; 手写笔(pen)走 pointerup 兜底
+    var lastTstart = 0;
     canvas.addEventListener('touchstart', function (e) {
       e.preventDefault();
+      lastTstart = Date.now();
       onTap(e);
     }, { passive: false });
     canvas.addEventListener('touchmove', function (e) { e.preventDefault(); }, { passive: false });
-    canvas.addEventListener('touchend', onTap, { passive: true });
-    canvas.addEventListener('pointerup', onTap, { passive: true });
-    canvas.addEventListener('click', onTap);
+    canvas.addEventListener('touchend', function (e) {
+      if (Date.now() - lastTstart < 800) return;
+      onTap(e);
+    }, { passive: true });
+    canvas.addEventListener('pointerup', function (e) {
+      if (!e.pointerType || e.pointerType === 'mouse') return;
+      if (Date.now() - lastTstart < 800) return;
+      onTap(e);
+    }, { passive: true });
+    canvas.addEventListener('click', function (e) {
+      if (Date.now() - lastTstart < 800) return;
+      onTap(e);
+    });
     canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
     btnUndo.addEventListener('click', doUndo);
