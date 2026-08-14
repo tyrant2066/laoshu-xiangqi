@@ -17,7 +17,14 @@ const ENGINE_DIR = path.dirname(ENGINE);
 const LIB_DIR = path.join(ENGINE_DIR, 'libatomic');
 const NNUE = process.env.PIKAFISH_NNUE ? path.join(process.env.PIKAFISH_NNUE) : '/tmp/pikafish.nnue';
 const NNUE_URL = (process.env.NNUE_URL || '').trim();
-const LEVEL_MS = { 1: 250, 2: 450, 3: 700, 4: 1000, 5: 1500 };
+// ===== 难度标定(智商梯度重塑) =====
+//   Level 1 新手(少儿): 极短搜索 + MultiPV 前三着随机轮盘(45/35/20), 明显漏勺与随手棋, 让孩子轻松吃子赢棋
+//   Level 2 入门: go depth 3 精确标定, 走法规矩、无低级大勺子, 适合打基础
+//   Level 3~5 中级/高级/大师: 原有递增算力不变
+const LEVEL_MS = { 1: 150, 2: 400, 3: 700, 4: 1000, 5: 1500 };
+const LEVEL_DEPTH = { 2: 3 };            // Level 2 用 depth 精确限层
+const LEVEL_MULTIPV = { 1: 3 };          // Level 1 出前 3 佳着供随机
+const LEVEL_WEAK_PICK = { 1: [45, 35, 20] };  // Level 1 权重: top1/top2/top3 概率(%)
 const SEARCH_MS_CAP = 1500;
 const NET_BUDGET = 6000;      // NNUE 下载总预算: 并行执行, 超时即降级经典评估
 const ENGINE_BUDGET = 7000;   // 引擎 spawn..go 前的握手阶段预算(下载+uciok+readyok)
@@ -118,7 +125,7 @@ async function downloadNet() {
   }
 }
 
-function runEngine(fen, ms, hardTimeout, netP) {
+function runEngine(fen, ms, hardTimeout, netP, opts) {
   return new Promise((resolve) => {
     let child;
     try {
@@ -139,6 +146,7 @@ function runEngine(fen, ms, hardTimeout, netP) {
     let stdoutRaw = '';   // 引擎原始 stdout 全文(限长), 失败时带回定位
     let best = null;
     let lastDepth = 0, lastScore = 0, nodes = 0;
+    const pvByMultipv = {};   // MultiPV: multipv 序号 -> { move, depth, score }
     let goSentAt = 0;
     const t0 = Date.now();
     let waiter = null;
@@ -207,6 +215,25 @@ function runEngine(fen, ms, hardTimeout, netP) {
         if (line.startsWith('bestmove')) {
           best = line.split(/\s+/)[1] || null;
           if (best) {
+            // Level 1 新手: 按权重从前 3 佳着中随机轮盘(明显漏勺与随手棋, 不再步步紧逼)
+            const pickW = opts && LEVEL_WEAK_PICK[opts.weak];
+            if (pickW && Object.keys(pvByMultipv).length >= 2) {
+              // 引擎最终 bestmove 才是 multipv1 的权威值(防旧 info 行覆盖)
+              if (pvByMultipv['1'] && best && best !== '0000' && best !== '(none)') {
+                pvByMultipv['1'] = { move: best, depth: lastDepth, score: lastScore };
+              }
+              const pvList = Object.keys(pvByMultipv).sort((a, b) => +a - +b).map(k => pvByMultipv[k]);
+              const r = Math.random() * 100;
+              let chosen = pvList[0];
+              if (r >= pickW[0] && r < pickW[0] + pickW[1]) chosen = pvList[1] || pvList[0];
+              else if (r >= pickW[0] + pickW[1]) chosen = pvList[2] || pvList[1] || pvList[0];
+              if (chosen && chosen.move && chosen.move !== '(none)' && chosen.move !== '0000') {
+                if (chosen.move !== best) console.log('[WEAK] Level1 放水: top1=' + best + ' -> 改走 ' + chosen.move + ' (multipv' + pvList.indexOf(chosen) + ')');
+                best = chosen.move;
+                lastDepth = chosen.depth || lastDepth;
+                lastScore = chosen.score || lastScore;
+              }
+            }
             console.log('[BESTMOVE] ' + best + ' depth=' + lastDepth + ' score=' + lastScore + ' nodes=' + nodes + ' ms=' + (goSentAt ? Date.now() - goSentAt : 0));
           } else {
             console.error('[BESTMOVE] 引擎返回空 bestmove 行: ' + JSON.stringify(line));
@@ -221,6 +248,11 @@ function runEngine(fen, ms, hardTimeout, netP) {
           if (sm) lastScore = sm[1] === 'mate' ? +sm[2] * 100000 : +sm[2];
           const nm = line.match(/nodes (\d+)/);
           if (nm) nodes = +nm[1];
+          if (opts && opts.weak) {
+            const pm = line.match(/multipv (\d+)/);
+            const pvM = (line.match(/\bpv ([a-h][0-9][a-h][0-9])/) || [])[1];
+            if (pm && pvM) pvByMultipv[pm[1]] = { move: pvM, depth: dm ? +dm[1] : 0, score: sm ? (sm[1] === 'mate' ? +sm[2] * 100000 : +sm[2]) : 0 };
+          }
         }
         if (waiter && line.indexOf(waiter.sub) >= 0) {
           const w = waiter;
@@ -284,14 +316,20 @@ function runEngine(fen, ms, hardTimeout, netP) {
         await waitFor('readyok', 3000);
         if (done) return;
         const elapsed = Date.now() - t0;
+        // 难度标定: Level 1 开 MultiPV 前三着供随机放水; Level 2 用 depth 精确限层
+        if (opts && opts.multipv) {
+          send('setoption name MultiPV value ' + opts.multipv);
+          console.log('[MULTIPV] MultiPV value ' + opts.multipv + ' (Level1 放水轮盘)');
+        }
         // go 的 movetime 绝不被剩余预算缩水: 先给足档位时间, 强杀时刻随 go 动态后移
         const useGoMs = Math.max(100, Math.min(ms, SEARCH_MS_CAP));
         goSentAt = Date.now();
         // 强杀 deadline = max(握手预留下限, go后计算时间+宽限); 确保引擎 movetime 内不可能被杀
         const deadline = Math.max(t0 + ENGINE_BUDGET + KILL_GRACE, goSentAt + useGoMs + KILL_GRACE);
         scheduleKill(deadline);
-        console.log('[UCI] net=' + (netInfo ? netInfo.mode : 'none') + ' fen=' + fen.slice(0, 90) + ' -> go movetime ' + useGoMs + ' 强杀时刻=+' + (deadline - t0) + 'ms');
-        send('go movetime ' + useGoMs);
+        const goCmd = (opts && opts.depth ? 'go depth ' + opts.depth + ' ' : 'go ') + 'movetime ' + useGoMs;
+        console.log('[UCI] net=' + (netInfo ? netInfo.mode : 'none') + ' fen=' + fen.slice(0, 90) + ' -> ' + goCmd + ' 强杀时刻=+' + (deadline - t0) + 'ms');
+        send(goCmd);
       } catch (e) {
         finalize();
       }
@@ -330,10 +368,11 @@ module.exports = async function handler(req, res) {
 
   let move = null, depth = 0, score = 0, nodes = 0, usedMs = 0, netInfo = null;
   // 引擎生命周期兜底: 若首轮 spawn 失败/闪退/未出着法, 自动重启全新进程再算一次
-  let r = await runEngine(fen, ms, ENGINE_BUDGET, netP);
+  const rOpts = { multipv: LEVEL_MULTIPV[lv] || 0, depth: LEVEL_DEPTH[lv] || 0, weak: LEVEL_WEAK_PICK[lv] ? lv : 0 };
+  let r = await runEngine(fen, ms, ENGINE_BUDGET, netP, rOpts);
   if (!(r && r.best)) {
     console.error('[MOVE] 引擎首轮异常, 自动重启进程重试: ' + JSON.stringify(r && r.info) + ' stderr=' + (r && r.stderrTail ? JSON.stringify(r.stderrTail) : '""'));
-    r = await runEngine(fen, ms, ENGINE_BUDGET, netP);
+    r = await runEngine(fen, ms, ENGINE_BUDGET, netP, rOpts);
     if (r && r.best) console.log('[MOVE] 引擎重启成功');
   }
   netInfo = await netP;

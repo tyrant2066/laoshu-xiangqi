@@ -580,21 +580,48 @@
   }
 
   // ===== 棋谱研习模式 =====
+  // 双轨发音: 墨案 X 等精简安卓系统常缺系统级 TTS 语音包(Web Speech API 不报错但无声),
+  // 原生 speechSynthesis 2.5s 内无 onstart 或报错时, 自动降级为在线 TTS 音频流
+  var audioPlayer = null;
+  function playOnlineTTS(text) {
+    try {
+      if (window.speechSynthesis) { try { speechSynthesis.cancel(); } catch (e) {} }
+      if (!audioPlayer) {
+        audioPlayer = new Audio();
+        audioPlayer.preload = 'none';
+      }
+      audioPlayer.src = 'https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=zh-CN&q=' + encodeURIComponent(String(text));
+      audioPlayer.play().catch(function () {
+        log('在线语音播放被浏览器拦截(需用户操作后), 已降级为文字讲解');
+      });
+    } catch (e) {
+      errorLog('在线语音播放失败, 已降级为文字讲解', e);
+    }
+  }
   function speak(text) {
     if (!speakOn) return;
+    var txt = String(text);
     try {
-      if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
-        log('语音讲解不可用(浏览器不支持), 已降级为文字讲解');
+      if (window.speechSynthesis && window.SpeechSynthesisUtterance) {
+        speechSynthesis.cancel();
+        var u = new SpeechSynthesisUtterance(txt);
+        u.lang = 'zh-CN';
+        u.rate = 0.95;
+        var fallbackTimer = setTimeout(function () {
+          // 原生 TTS 无声(2.5s 未开始发声): 墨案 X 等无语音包设备自动降级
+          log('原生 TTS 无声(超时), 自动降级为在线语音');
+          playOnlineTTS(txt);
+        }, 2500);
+        u.onstart = function () { clearTimeout(fallbackTimer); };
+        u.onend = function () { clearTimeout(fallbackTimer); };
+        u.onerror = function () { clearTimeout(fallbackTimer); playOnlineTTS(txt); };
+        speechSynthesis.speak(u);
         return;
       }
-      speechSynthesis.cancel();
-      var u = new SpeechSynthesisUtterance(String(text));
-      u.lang = 'zh-CN';
-      u.rate = 0.95;
-      speechSynthesis.speak(u);
     } catch (e) {
-      errorLog('语音讲解失败, 已降级为文字', e);
+      errorLog('原生语音不可用, 降级为在线语音', e);
     }
+    playOnlineTTS(txt);
   }
 
   function showBookIntro() {
