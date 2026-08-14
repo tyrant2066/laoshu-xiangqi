@@ -344,6 +344,7 @@
       return ctrl.cancelled || (o.token && o.token.cancelled);
     }
     var url = endpoint() + '?fen=' + encodeURIComponent(boardToFEN(o.board, o.turn)) + '&level=' + o.level;
+    url += '&_t=' + Date.now();
     var t0 = nowMs();
     var abort = null;
     var settled = false;
