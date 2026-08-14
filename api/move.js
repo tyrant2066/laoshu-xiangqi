@@ -135,6 +135,7 @@ function runEngine(fen, ms, hardTimeout, netP) {
     let done = false;
     let buf = '';
     let errBuf = '';
+    let stdoutRaw = '';   // 引擎原始 stdout 全文(限长), 失败时带回定位
     let best = null;
     let lastDepth = 0, lastScore = 0, nodes = 0;
     let goSentAt = 0;
@@ -172,7 +173,8 @@ function runEngine(fen, ms, hardTimeout, netP) {
         best, depth: lastDepth, score: lastScore, nodes,
         ms: goSentAt ? Date.now() - goSentAt : Date.now() - t0,
         info: exitInfo ? { code: exitInfo.code, signal: exitInfo.signal, killedByUs: weKilled } : null,
-        stderrTail: errBuf
+        stderrTail: errBuf,
+        stdoutTail: stdoutRaw
       });
     }
 
@@ -188,6 +190,7 @@ function runEngine(fen, ms, hardTimeout, netP) {
 
     child.stdout && child.stdout.setEncoding('utf8');
     child.stdout && child.stdout.on('data', d => {
+      stdoutRaw = (stdoutRaw + String(d)).slice(-4000);
       buf += d;
       let i;
       while ((i = buf.indexOf('\n')) >= 0) {
@@ -195,6 +198,11 @@ function runEngine(fen, ms, hardTimeout, netP) {
         buf = buf.slice(i + 1);
         if (line.startsWith('bestmove')) {
           best = line.split(/\s+/)[1] || null;
+          if (best) {
+            console.log('[BESTMOVE] ' + best + ' depth=' + lastDepth + ' score=' + lastScore + ' nodes=' + nodes + ' ms=' + (goSentAt ? Date.now() - goSentAt : 0));
+          } else {
+            console.error('[BESTMOVE] 引擎返回空 bestmove 行: ' + JSON.stringify(line));
+          }
           finalize();
           return;
         }
@@ -270,6 +278,7 @@ function runEngine(fen, ms, hardTimeout, netP) {
         const budgetLeft = hardTimeout - elapsed - 1500;
         const useGoMs = Math.max(100, Math.min(Math.min(ms, SEARCH_MS_CAP), budgetLeft));
         goSentAt = Date.now();
+        console.log('[UCI] net=' + (netInfo ? netInfo.mode : 'none') + ' fen=' + fen.slice(0, 90) + ' -> go movetime ' + useGoMs);
         send('go movetime ' + useGoMs);
       } catch (e) {
         finalize();
@@ -294,7 +303,9 @@ module.exports = async function handler(req, res) {
   }
   const fen = (url.searchParams.get('fen') || '').trim();
   const level = parseInt(url.searchParams.get('level') || '3', 10);
+  console.log('[REQ] GET /api/move fen=' + fen + ' 长度=' + fen.length + ' level=' + level + ' UA=' + String((req.headers || {})['user-agent'] || '').slice(0, 80));
   if (!/^[kKrRnNbBaAcCpP0-9/]+ [wb] - - \d+ \d+$/.test(fen)) {
+    console.error('[REQ] FEN 非法拒绝: ' + JSON.stringify(fen));
     resp(res, 400, { error: 'bad fen' });
     return;
   }
@@ -314,12 +325,27 @@ module.exports = async function handler(req, res) {
     if (r && r.best) console.log('[MOVE] 引擎重启成功');
   }
   netInfo = await netP;
+  let failureReason = null;
+  let engineStdout = null;
   if (r && r.best) {
-    move = uciToSq(r.best);
-    depth = r.depth; score = r.score; nodes = r.nodes; usedMs = r.ms;
+    if (r.best === '(none)') {
+      failureReason = '引擎无合法着法(将死或困毙): bestmove (none)';
+    } else {
+      move = uciToSq(r.best);
+      depth = r.depth; score = r.score; nodes = r.nodes; usedMs = r.ms;
+      if (!move || !isFinite(move.f) || !isFinite(move.t)) {
+        move = null;
+        failureReason = 'bestmove 无法解析: ' + JSON.stringify(r.best) + ' (期望 4 字符如 e2e4)';
+      }
+    }
+  } else {
+    failureReason = '引擎未输出 bestmove(两轮均失败): exit=' + JSON.stringify(r && r.info) + ' stderr=' + JSON.stringify(r && r.stderrTail || '');
   }
   const totalMs = Date.now() - t0;
-  if (!move) console.error('[MOVE] 引擎两轮均未返回着法, totalMs', totalMs, 'netInfo', JSON.stringify(netInfo));
+  if (!move) {
+    engineStdout = r && r.stdoutTail ? r.stdoutTail : null;
+    console.error('[MOVE] 无着法返回, totalMs', totalMs, 'failureReason:', failureReason, 'engineStdout:', JSON.stringify(engineStdout || '').slice(0, 500));
+  }
   resp(res, 200, {
     fen,
     move,
@@ -330,6 +356,8 @@ module.exports = async function handler(req, res) {
     ms: usedMs || totalMs,
     totalMs,
     ok: !!move,
+    failureReason,
+    engineStdout,
     engine: 'pikafish-2026-01-02',
     netReady: !!netInfo && netInfo.mode !== 'classic' && netInfo.mode !== 'none',
     nnue: {

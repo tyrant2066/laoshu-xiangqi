@@ -398,8 +398,8 @@
         onAttempt(res, err);
       }
       function parseData(data) {
-        if (data && data.move && typeof data.move.f === 'number' && typeof data.move.t === 'number') doneOnce(data, null);
-        else doneOnce(null, { retry: false, err: new Error('响应缺少 move 字段') });
+        if (data && data.move && typeof data.move.f === 'number' && isFinite(data.move.f) && typeof data.move.t === 'number' && isFinite(data.move.t)) doneOnce(data, null);
+        else doneOnce(null, { retry: false, err: new Error(data && data.failureReason ? '云端: ' + data.failureReason : '响应缺少 move 字段') });
       }
 
       // 现代浏览器: fetch + AbortController(有 abort 支持)
