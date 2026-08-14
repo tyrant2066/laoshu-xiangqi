@@ -84,6 +84,7 @@ function runEngine(fen, ms, hardTimeout) {
     const t0 = Date.now();
     let waiter = null;
     let exitInfo = null;
+    let exitLogged = false;
 
     const killTimer = setTimeout(finalize, Math.max(1000, hardTimeout));
 
@@ -94,10 +95,9 @@ function runEngine(fen, ms, hardTimeout) {
       if (waiter) { clearTimeout(waiter.timer); waiter = null; }
       try { child.stdin && child.stdin.end(); } catch (e) {}
       try { child.kill('SIGKILL'); } catch (e) {}
-      if (!best) {
-        const errTail = errBuf.replace(/\s+$/, '').split('\n').slice(-8).join('\n').slice(-1200);
-        if (errTail) console.error('引擎提前退出, stderr 尾部:', '\n' + errTail);
-        if (exitInfo) console.error('引擎进程退出: code=' + exitInfo.code + ' signal=' + exitInfo.signal);
+      if (!best && !exitLogged) {
+        exitLogged = true;
+        console.error('引擎异常退出真相:', { code: exitInfo ? exitInfo.code : 'unknown', stderr: errBuf });
       }
       resolve({ best, depth: lastDepth, score: lastScore, nodes, ms: goSentAt ? Date.now() - goSentAt : Date.now() - t0 });
     }
@@ -146,7 +146,14 @@ function runEngine(fen, ms, hardTimeout) {
     child.stderr && child.stderr.on('data', d => { errBuf = (errBuf + d).slice(-8000); });
     child.stderr && child.stderr.on('error', e => { if (!done) console.error('引擎 stderr 错误:', e && e.code, e && e.message); });
     child.stdin && child.stdin.on('error', e => { if (!done) console.error('引擎 stdin 异步错误:', e && e.code, e && e.message); });
-    child.on('exit', (code, signal) => { exitInfo = { code: code, signal: signal }; finalize(); });
+    child.on('exit', (code, signal) => {
+      exitInfo = { code: code === null ? 'SIGKILL(' + signal + ')' : code, signal: signal };
+      if (((code !== null && code !== 0) || (signal && signal !== 'SIGKILL') || !best) && !exitLogged) {
+        exitLogged = true;
+        console.error('引擎异常退出真相:', { code: code, signal: signal, stderr: errBuf });
+      }
+      finalize();
+    });
     child.on('error', e => { console.error('引擎进程错误:', e); exitInfo = { code: 'ERROR', signal: e && e.code }; finalize(); });
 
     const send = s => {
