@@ -269,7 +269,8 @@ function runEngine(fen, ms, hardTimeout, netP) {
         // 下载与 UCI 握手并行进行: 此时下载已并行跑了约 1s, 剩余预算内决出
         const netInfo = netP ? await netP : { mode: 'none' };
         if (done) return;
-        if (netInfo.mode === 'nnue') {
+        if (netInfo.mode === 'nnue' || netInfo.mode === 'cached') {
+          // 缓存命中或刚下载成功: 权重文件一定可用, 每一轮新进程都必须拿到 EvalFile, 否则引擎找不到默认权重直接 exit(1)
           send('setoption name EvalFile value ' + NNUE);
         } else if (netInfo.mode === 'classic') {
           send('setoption name Use NNUE value false');
