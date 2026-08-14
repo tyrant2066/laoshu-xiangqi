@@ -156,14 +156,14 @@
     for (var c = 0; c < 9; c++) {
       if (c === 0 || c === 8) {
         // 左右外边线: 从行0 一直连通绘制到行9, 封死左右边界
-        ctx.moveTo(gx(c), gy(0)); ctx.lineTo(gx(c), gy(10));
+        ctx.moveTo(gx(c), gy(0)); ctx.lineTo(gx(c), gy(9));
       } else {
         // 中间 7 条竖线: 上段行0~行4, 下段行5~行9, 河界区域留空
         ctx.moveTo(gx(c), gy(0)); ctx.lineTo(gx(c), gy(4));
-        ctx.moveTo(gx(c), gy(5)); ctx.lineTo(gx(c), gy(10));
+        ctx.moveTo(gx(c), gy(5)); ctx.lineTo(gx(c), gy(9));
       }
     }
-    for (var r = 0; r <= 10; r++) {
+    for (var r = 0; r <= 9; r++) {
       if (r === 4 || r === 5) {
         ctx.moveTo(gx(0), gy(r)); ctx.lineTo(gx(3), gy(r));
         ctx.moveTo(gx(5), gy(r)); ctx.lineTo(gx(8), gy(r));

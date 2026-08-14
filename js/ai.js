@@ -357,7 +357,7 @@
       var timer = setTimeout(function () {
         if (!cancelled()) { try { abort.abort(); } catch (e) {} }
       }, 20000);
-      fetch(url, { signal: abort.signal })
+      fetch(url, { signal: abort.signal, cache: 'no-store' })
         .then(function (res) {
           if (!res.ok) throw new Error('HTTP ' + res.status);
           return res.json();
@@ -391,6 +391,7 @@
         xhr = new XMLHttpRequest();
         xhr.open('GET', url, true);
         xhr.timeout = 20000;
+        xhr.setRequestHeader('Cache-Control', 'no-cache, no-store');
         xhr.onreadystatechange = function () {
           if (xhr.readyState !== 4 || cancelled() || settled) return;
           clearTimeout(timer2);
