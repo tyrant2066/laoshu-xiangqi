@@ -357,7 +357,7 @@
       abort = new AbortController();
       var timer = setTimeout(function () {
         if (!cancelled()) { try { abort.abort(); } catch (e) {} }
-      }, 20000);
+      }, 5000);
       fetch(url, { signal: abort.signal, cache: 'no-store' })
         .then(function (res) {
           if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -382,7 +382,7 @@
           clearTimeout(timer);
           if (cancelled() || settled) return;
           settled = true;
-          if (err && err.name === 'AbortError') { done(null, new Error('请求超时(20秒)')); return; }
+          if (err && err.name === 'AbortError') { done(null, new Error('请求超时(5秒)')); return; }
           done(null, err instanceof Error ? err : new Error('请求失败: ' + String(err)));
         });
     } else {
@@ -391,7 +391,7 @@
       try {
         xhr = new XMLHttpRequest();
         xhr.open('GET', url, true);
-        xhr.timeout = 20000;
+        xhr.timeout = 5000;
         xhr.setRequestHeader('Cache-Control', 'no-cache, no-store');
         xhr.onreadystatechange = function () {
           if (xhr.readyState !== 4 || cancelled() || settled) return;
@@ -418,10 +418,10 @@
           if (!cancelled() && !settled) { settled = true; done(null, new Error('网络错误(XHR)')); }
         };
         xhr.ontimeout = function () {
-          if (!cancelled() && !settled) { settled = true; done(null, new Error('请求超时(20秒)')); }
+          if (!cancelled() && !settled) { settled = true; done(null, new Error('请求超时(5秒)')); }
         };
         xhr.send();
-        timer2 = setTimeout(function () { try { xhr.abort(); } catch (e) {} }, 20000);
+        timer2 = setTimeout(function () { try { xhr.abort(); } catch (e) {} }, 5000);
       } catch (e) {
         done(null, e instanceof Error ? e : new Error('发起请求异常: ' + String(e)));
       }

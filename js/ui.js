@@ -17,6 +17,8 @@
   var lockUntil = 0;
   var lastTapAt = 0;
   var logLines = [];
+  var toastTimer = 0;   // 临时通知自动恢复定时器
+  var aiFailSafe = 0;   // AI 卡死兜底定时器
 
   var STATUS, capRed, capBlack, debugBox, btnUndo, btnNew, btnGhost, btnSettings;
   var modal, modalBackdrop, mModeAI, mModeDuel, mSideRed, mSideBlack, mLogToggle, mClose;
@@ -42,7 +44,16 @@
   }
 
   function sideName(side) { return side === RED ? '红方' : '黑方'; }
-  function statusText(t) { STATUS.textContent = t; }
+  function statusText(t) {
+    STATUS.textContent = t;
+    if (toastTimer) { clearTimeout(toastTimer); toastTimer = 0; }
+  }
+  // 临时通知: 显示 ms 毫秒后自动恢复为真实对局状态, 绝不残留遮挡
+  function toast(t, ms) {
+    statusText(t);
+    var self = this;
+    toastTimer = setTimeout(function () { toastTimer = 0; updateStatus(); }, ms || 2500);
+  }
 
   function freshGame() {
     var b = E.initialBoard();
@@ -102,6 +113,7 @@
   }
 
   function updateStatus() {
+    if (toastTimer) { clearTimeout(toastTimer); toastTimer = 0; }
     if (!game) return;
     if (game.over) {
       var r = game.result;
@@ -408,6 +420,19 @@
     aiError = null;
     var token = { cancelled: false };
     aiToken = token;
+    if (aiFailSafe) { clearTimeout(aiFailSafe); aiFailSafe = 0; }
+    // 兜底保险: 8 秒内无论如何完成回调, 绝不让状态停留在"AI 思考中…"
+    aiFailSafe = setTimeout(function () {
+      aiFailSafe = 0;
+      if (token.cancelled || !aiThinking) return;
+      token.cancelled = true;
+      aiThinking = false;
+      aiToken = null;
+      aiError = 'AI 响应超时，请重新走棋';
+      log('[错误] AI 兜底超时, 已强制恢复');
+      redrawAll();
+      setControls();
+    }, 8000);
     setControls();
     updateStatus();
     log('AI 开始思考: level=' + game.level + ' (' + E.LEVELS[game.level - 1].name + ') 执' + (game.turn === RED ? '红' : '黑'));
@@ -420,13 +445,14 @@
       token: token
     }, function (res, err) {
       if (token.cancelled) return;
+      if (aiFailSafe) { clearTimeout(aiFailSafe); aiFailSafe = 0; }
       aiThinking = false;
       aiToken = null;
       if (!res || !res.move) {
         var reason = err && err.message ? err.message : '引擎未返回着法';
         var api = (typeof LAOSHUJI_API === 'string' && LAOSHUJI_API) ? LAOSHUJI_API : '/api/move';
         errorLog('AI 请求失败: ' + reason + ' (API=' + api + ')');
-        aiError = 'AI 无响应（' + reason + '），请检查网络后重试或悔棋';
+        aiError = 'AI 无响应（' + reason + '），请重新走棋';
         redrawAll();
         setControls();
         return;
@@ -512,7 +538,7 @@
 
   function doUndo() {
     var n = game.mode === 'ai' ? 2 : 1;
-    if (game.history.length === 0) { statusText('无棋可悔'); return; }
+    if (game.history.length === 0) { toast('无棋可悔', 2500); return; }
     if (aiThinking) {
       if (aiToken) aiToken.cancelled = true;
       aiThinking = false;
@@ -564,9 +590,12 @@
   }
 
   function doGhost() {
+    // 强制销毁未完成请求与临时通知, 状态栏彻底重置后显示临时提示(自动恢复)
+    cancelAI();
+    aiError = null;
     log('去残影: 全屏重绘');
     redrawAll();
-    statusText('屏幕已刷新，残影已清除');
+    toast('屏幕已刷新，残影已清除', 2500);
   }
 
   function toggleLog() {
@@ -582,6 +611,7 @@
 
   function cancelAI() {
     if (aiToken) { aiToken.cancelled = true; aiToken = null; }
+    if (aiFailSafe) { clearTimeout(aiFailSafe); aiFailSafe = 0; }
     aiThinking = false;
   }
 
