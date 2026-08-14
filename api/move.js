@@ -9,12 +9,21 @@ const fs = require('fs');
 const path = require('path');
 
 const ENGINE = process.env.PIKAFISH_BIN || path.join(__dirname, '..', 'engine', 'pikafish-sse41-popcnt');
+const ENGINE_DIR = path.dirname(ENGINE);
+// AL2023 精简镜像缺 libatomic.so.1, 引擎链接了 __atomic_* 符号, 需随包自带并注入加载路径
+const LIB_DIR = path.join(ENGINE_DIR, 'libatomic');
 const NNUE = process.env.PIKAFISH_NNUE ? path.join(process.env.PIKAFISH_NNUE) : '/tmp/pikafish.nnue';
 const NNUE_URL = process.env.NNUE_URL || '';
 const LEVEL_MS = { 1: 400, 2: 800, 3: 1500, 4: 2500, 5: 4800 };
 const SEARCH_MS_CAP = 4800;
 const TOTAL_BUDGET = 8500;
 const NET_TIMEOUT = 8000;
+
+function engineEnv() {
+  const e = Object.assign({}, process.env);
+  e.LD_LIBRARY_PATH = (e.LD_LIBRARY_PATH ? e.LD_LIBRARY_PATH + ':' : '') + LIB_DIR;
+  return e;
+}
 
 function resp(res, code, obj) {
   res.writeHead(code, {
@@ -69,7 +78,7 @@ function runEngine(fen, ms, hardTimeout) {
         resolve(null);
         return;
       }
-      child = spawn(ENGINE, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+      child = spawn(ENGINE, [], { stdio: ['pipe', 'pipe', 'pipe'], env: engineEnv() });
     } catch (e) {
       console.error('引擎启动崩溃:', e);
       resolve(null);
