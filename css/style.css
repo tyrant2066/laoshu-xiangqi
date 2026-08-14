@@ -133,6 +133,65 @@ canvas#board {
   min-height: 46px;
 }
 
+/* 棋谱研习讲解条 */
+#bookNote {
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: baseline;
+  align-items: baseline;
+  gap: 8px;
+  margin: 6px 0 2px;
+  padding: 6px 8px;
+  background: #fff8dc;
+  border: 2px solid #c9a227;
+  border-radius: 8px;
+  font-size: 15px;
+  line-height: 1.4;
+  min-height: 30px;
+}
+
+#bookNote[hidden] {
+  display: none;
+}
+
+#bookStepLabel {
+  -webkit-flex-shrink: 0;
+  flex-shrink: 0;
+  font-weight: bold;
+  color: #8a6d1a;
+}
+
+#bookText {
+  -webkit-flex: 1;
+  flex: 1;
+}
+
+/* 选谱列表 */
+.bookList {
+  max-height: 168px;
+  overflow-y: auto;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-flex-direction: column;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bookList .mSel {
+  -webkit-flex: none;
+  flex: none;
+  text-align: left;
+  padding: 8px 10px;
+  min-height: 40px;
+  font-size: 15px;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+#btnSpeak:disabled {
+  opacity: 0.45;
+}
+
 #debugBox {
   font-family: Consolas, Menlo, monospace;
   font-size: 12px;

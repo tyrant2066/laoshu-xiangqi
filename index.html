@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>老叔之家象棋</title>
-<link rel="stylesheet" href="css/style.css?v=3.0">
+<link rel="stylesheet" href="css/style.css?v=3.1">
 </head>
 <body>
 <div id="app">
@@ -26,9 +26,15 @@
     <span id="capBlack" class="capLine">黑方吃子：（无）</span>
   </div>
 
+  <div id="bookNote" class="bookNote" hidden>
+    <span id="bookStepLabel">棋谱研习</span>
+    <span id="bookText"></span>
+  </div>
+
   <div id="actionBar" class="bar">
     <button id="btnNew" class="btn bigBtn">开始</button>
     <button id="btnUndo" class="btn bigBtn">悔棋</button>
+    <button id="btnSpeak" class="btn bigBtn" disabled>🔊 听讲解</button>
     <button id="btnGhost" class="btn bigBtn">刷新</button>
     <button id="btnSettings" class="btn bigBtn">设置</button>
   </div>
@@ -45,6 +51,21 @@
       <div class="mBtns">
         <button id="mModeAI" class="btn mSel on">人机对战</button>
         <button id="mModeDuel" class="btn mSel">双人同屏</button>
+        <button id="mModeBook" class="btn mSel">棋谱研习</button>
+      </div>
+      <div class="mHint" id="mModeBookHint" hidden>跟着棋谱学习经典开局,走对一步讲解一步</div>
+    </div>
+
+    <div class="mGroup" id="mGroupBook" hidden>
+      <div class="mLabel">选择棋谱</div>
+      <div class="bookList" id="bookList"></div>
+    </div>
+
+    <div class="mGroup" id="mGroupSpeak">
+      <div class="mLabel">语音讲解</div>
+      <div class="mBtns">
+        <button id="mSpeakOn" class="btn mSel on">开启</button>
+        <button id="mSpeakOff" class="btn mSel">关闭</button>
       </div>
     </div>
 
@@ -72,7 +93,8 @@
   </div>
 </div>
 
-<script src="js/ai.js?v=3.0"></script>
-<script src="js/ui.js?v=3.0"></script>
+<script src="js/ai.js?v=3.1"></script>
+<script src="js/book.js?v=3.1"></script>
+<script src="js/ui.js?v=3.1"></script>
 </body>
 </html>

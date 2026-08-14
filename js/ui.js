@@ -5,6 +5,7 @@
   var DEBUG = true;
   var E = XQEngine;
   var RED = E.RED, BLACK = E.BLACK;
+  if (DEBUG) Object.defineProperty(window, '__game', { get: function () { return game; } });
 
   var canvas, ctx;
   var cell = 0, pad = 0, dpr = 1;
@@ -20,10 +21,16 @@
   var toastTimer = 0;   // 临时通知自动恢复定时器
   var aiFailSafe = 0;   // AI 卡死兜底定时器
 
-  var STATUS, capRed, capBlack, btnUndo, btnNew, btnGhost, btnSettings;
-  var modal, modalBackdrop, mModeAI, mModeDuel, mSideRed, mSideBlack, mClose;
-  var mGroupLevel, mGroupSide;
+  var STATUS, capRed, capBlack, btnUndo, btnNew, btnSpeak, btnGhost, btnSettings;
+  var modal, modalBackdrop, mModeAI, mModeDuel, mModeBook, mSideRed, mSideBlack, mClose;
+  var mGroupLevel, mGroupSide, mGroupBook, mGroupSpeak, mModeBookHint;
+  var mSpeakOn, mSpeakOff, bookList;
+  var bookNote, bookStepLabel, bookText;
   var levelBtns = [];
+  var books = [];
+  var bookBtns = [];
+  var bookTimer = 0;
+  var speakOn = true;
 
   function $(id) { return document.getElementById(id); }
 
@@ -40,6 +47,7 @@
   }
 
   function sideName(side) { return side === RED ? '红方' : '黑方'; }
+  function sideKey(side) { return side === RED ? 'red' : 'black'; }
   // 状态栏用户友好文案: 底层技术参数(exit code/JSON/错误栈)只进 console, 不暴露给玩家
   function friendlyError(reason) {
     var r = String(reason || '');
@@ -64,11 +72,33 @@
     var b = E.initialBoard();
     return {
       mode: 'ai', level: 1, playerSide: RED,
+      bookIdx: 0, stepIdx: 0,
       board: b, turn: RED,
       history: [], hashStack: [E.hashOfBoard(b)],
       captured: [[], []],
       lastMove: null, over: false, result: null
     };
+  }
+
+  function freshBookGame(idx) {
+    var b = E.initialBoard();
+    var bk = books[idx] || books[0];
+    return {
+      mode: 'book', level: 1, playerSide: bk.userSide === 'black' ? BLACK : RED,
+      bookIdx: books.indexOf(bk), stepIdx: 0,
+      board: b, turn: RED,
+      history: [], hashStack: [E.hashOfBoard(b)],
+      captured: [[], []],
+      lastMove: null, over: false, result: null
+    };
+  }
+
+  function currentBook() { return books[game.bookIdx] || null; }
+  function currentStep() {
+    if (!game || game.mode !== 'book') return null;
+    var bk = books[game.bookIdx];
+    if (!bk || !bk.steps) return null;
+    return bk.steps[game.stepIdx] || null;
   }
 
   function applyMove(g, f, t) {
@@ -134,6 +164,10 @@
     who = aiThinking ? 'AI 思考中…（' + E.LEVELS[game.level - 1].name + '）' : (aiError || 'AI 思考中…');
   } else if (game.mode === 'ai') {
       who = '轮到你走棋（' + (game.playerSide === RED ? '红方' : '黑方') + '）';
+    } else if (game.mode === 'book') {
+      var st = currentStep();
+      if (!st) who = '棋谱研习完成';
+      else who = st.mover === sideKey(game.playerSide) ? '轮到你了，请按棋谱走' : '演示走棋中…';
     } else {
       who = '轮到' + sideName(game.turn) + '走棋';
     }
@@ -144,7 +178,7 @@
     var vw = window.innerWidth, vh = window.innerHeight;
     var appTop = $('app').getBoundingClientRect().top;
     var above = STATUS.getBoundingClientRect().bottom - appTop;
-    var below = capRed.offsetHeight + $('actionBar').offsetHeight + 18;
+    var below = capRed.offsetHeight + $('bookNote').offsetHeight + $('actionBar').offsetHeight + 18;
     var availW = Math.max(240, vw - 16);
     var availH = Math.max(240, vh - above - below - 12);
     // 画布固有纵横比固定为 11 : 9 = (10行 + 双侧0.5格) : (8列 + 双侧0.5格)
@@ -253,6 +287,27 @@
   }
 
   function drawHints() {
+    if (game.mode === 'book' && !game.over) {
+      var bstep = currentStep();
+      if (bstep) {
+        ctx.strokeStyle = '#8a8a8a';
+        ctx.fillStyle = '#8a8a8a';
+        ctx.lineWidth = Math.max(3, cell * 0.07);
+        ctx.beginPath();
+        ctx.arc(sqX(bstep.from), sqY(bstep.from), cell * 0.5, 0, 6.2832);
+        ctx.stroke();
+        if (game.board[bstep.to] === 0) {
+          ctx.beginPath();
+          ctx.arc(sqX(bstep.to), sqY(bstep.to), cell * 0.1, 0, 6.2832);
+          ctx.fill();
+        } else {
+          ctx.lineWidth = Math.max(2, cell * 0.04);
+          ctx.beginPath();
+          ctx.arc(sqX(bstep.to), sqY(bstep.to), cell * 0.46, 0, 6.2832);
+          ctx.stroke();
+        }
+      }
+    }
     if (sel < 0 || game.over) return;
     var moves = E.legalMoves(game.board, game.turn);
     ctx.fillStyle = '#000000';
@@ -318,11 +373,12 @@
     if (!game) return;
     try {
       localStorage.setItem('laoshuji_xiangqi_v1', JSON.stringify({
-        v: 1, mode: game.mode, level: game.level, playerSide: game.playerSide,
+        v: 2, mode: game.mode, level: game.level, playerSide: game.playerSide,
         turn: game.turn, board: Array.prototype.slice.call(game.board),
         history: game.history, hashStack: game.hashStack,
         captured: game.captured, lastMove: game.lastMove,
-        over: game.over, result: game.result
+        over: game.over, result: game.result,
+        bookIdx: game.bookIdx || 0, stepIdx: game.stepIdx || 0, speakOn: speakOn
       }));
     } catch (e) {
       errorLog('保存失败', e);
@@ -355,8 +411,15 @@
         log('[警告] 存档校验失败, 已丢弃, 重新开局');
         return null;
       }
+      var md = d.mode === 'duel' ? 'duel' : (d.mode === 'book' ? 'book' : 'ai');
+      if (md === 'book') {
+        if (!books[d.bookIdx] || !books[d.bookIdx].steps) return null;
+        if (typeof d.stepIdx !== 'number' || d.stepIdx < 0 || d.stepIdx > books[d.bookIdx].steps.length) return null;
+        if (d.stepIdx !== (d.history || []).length) return null;
+      }
+      if (typeof d.speakOn === 'boolean') speakOn = d.speakOn;
       return {
-        mode: d.mode === 'duel' ? 'duel' : 'ai',
+        mode: md,
         level: Math.max(1, Math.min(5, d.level || 1)),
         playerSide: d.playerSide === BLACK ? BLACK : RED,
         board: new Int8Array(d.board),
@@ -365,7 +428,9 @@
         hashStack: stack,
         captured: d.captured || [[], []],
         lastMove: d.lastMove || null,
-        over: !!d.over, result: d.result || null
+        over: !!d.over, result: d.result || null,
+        bookIdx: md === 'book' ? d.bookIdx : 0,
+        stepIdx: md === 'book' ? d.stepIdx : 0
       };
     } catch (e) {
       errorLog('读取存档失败', e);
@@ -378,6 +443,7 @@
     btnNew.disabled = false;
     btnGhost.disabled = false;
     btnSettings.disabled = false;
+    btnSpeak.disabled = !(game.mode === 'book' && !game.over && !!currentStep());
   }
 
   function setOn(btn, on) {
@@ -387,14 +453,25 @@
   function syncSettingsUI() {
     setOn(mModeAI, game.mode === 'ai');
     setOn(mModeDuel, game.mode === 'duel');
+    setOn(mModeBook, game.mode === 'book');
     setOn(mSideRed, game.playerSide === RED);
     setOn(mSideBlack, game.playerSide === BLACK);
     var aiMode = game.mode === 'ai';
     if (aiMode) { mGroupLevel.classList.remove('disabled'); mGroupSide.classList.remove('disabled'); }
     else { mGroupLevel.classList.add('disabled'); mGroupSide.classList.add('disabled'); }
-    for (var i = 0; i < levelBtns.length; i++) {
-      var lv = parseInt(levelBtns[i].getAttribute('data-level'), 10);
-      setOn(levelBtns[i], game.level === lv);
+    var bookMode = game.mode === 'book';
+    mGroupBook.hidden = !bookMode;
+    mGroupSpeak.hidden = !bookMode;
+    mModeBookHint.hidden = !bookMode;
+    setOn(mSpeakOn, speakOn);
+    setOn(mSpeakOff, !speakOn);
+    for (var i = 0; i < bookBtns.length; i++) {
+      var idx = parseInt(bookBtns[i].getAttribute('data-bidx'), 10);
+      setOn(bookBtns[i], bookMode && game.bookIdx === idx);
+    }
+    for (var j = 0; j < levelBtns.length; j++) {
+      var lv = parseInt(levelBtns[j].getAttribute('data-level'), 10);
+      setOn(levelBtns[j], game.level === lv);
     }
   }
 
@@ -416,6 +493,19 @@
       return;
     }
     setControls();
+    if (game.mode === 'book') {
+      var st = currentStep();
+      if (!st) {
+        toast('棋谱研习完成！', 4000);
+        bookNote.hidden = false;
+        bookStepLabel.textContent = '棋谱研习';
+        bookText.textContent = '本谱全部着法已研习完毕，点击"开始"可重新研习。';
+      } else {
+        showComment(st);
+        if (st.mover !== sideKey(game.playerSide)) scheduleBookMove();
+      }
+      return;
+    }
     if (game.mode === 'ai' && game.turn !== game.playerSide) startAI();
   }
 
@@ -483,9 +573,102 @@
   function doHumanMove(f, t) {
     log('玩家走棋: ' + E.moveToCN(game.board, f, t) + ' (' + f + '→' + t + ')');
     applyMove(game, f, t);
+    if (game.mode === 'book') game.stepIdx++;
     sel = -1;
     lockUntil = Date.now() + 300;
     afterMove();
+  }
+
+  // ===== 棋谱研习模式 =====
+  function speak(text) {
+    if (!speakOn) return;
+    try {
+      if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
+        log('语音讲解不可用(浏览器不支持), 已降级为文字讲解');
+        return;
+      }
+      speechSynthesis.cancel();
+      var u = new SpeechSynthesisUtterance(String(text));
+      u.lang = 'zh-CN';
+      u.rate = 0.95;
+      speechSynthesis.speak(u);
+    } catch (e) {
+      errorLog('语音讲解失败, 已降级为文字', e);
+    }
+  }
+
+  function showBookIntro() {
+    var bk = currentBook();
+    if (!bk) return;
+    var wasHidden = bookNote.hidden;
+    bookNote.hidden = false;
+    bookStepLabel.textContent = '棋谱研习';
+    bookText.textContent = bk.title + '。' + bk.description;
+    if (wasHidden) layout();
+    redrawAll();
+    speak(bk.title + '。' + bk.description);
+  }
+
+  function showComment(st) {
+    if (!st) return;
+    var wasHidden = bookNote.hidden;
+    bookNote.hidden = false;
+    bookStepLabel.textContent = '第' + (game.stepIdx + 1) + '步';
+    bookText.textContent = st.name + '：' + st.comment;
+    if (wasHidden) layout();
+    redrawAll();
+    speak(st.name + '。' + st.comment);
+  }
+
+  function clearBookTimer() {
+    if (bookTimer) { clearTimeout(bookTimer); bookTimer = 0; }
+  }
+
+  // 轮到系统演示的着法: 600ms 后自动走出, 走前先清理防重复
+  function scheduleBookMove() {
+    clearBookTimer();
+    var g = game;
+    bookTimer = setTimeout(function () {
+      bookTimer = 0;
+      if (!game || game !== g || game.mode !== 'book' || game.over) return;
+      var st = currentStep();
+      if (!st || st.mover === sideKey(game.playerSide)) return;
+      log('演示走棋: ' + st.name + ' (' + st.from + '→' + st.to + ')');
+      applyMove(game, st.from, st.to);
+      game.stepIdx++;
+      lockUntil = Date.now() + 300;
+      afterMove();
+    }, 600);
+  }
+
+  function tapBookSquare(sq) {
+    if (game.over) { sel = -1; redrawAll(); return; }
+    var st = currentStep();
+    if (!st) { sel = -1; redrawAll(); toast('棋谱研习已完成', 2500); return; }
+    if (st.mover !== sideKey(game.playerSide)) {
+      toast('正在演示走棋，请稍候…', 1500);
+      return;
+    }
+    var p = game.board[sq];
+    if (sel < 0) {
+      if (sq === st.from) {
+        sel = sq;
+        redrawAll();
+        statusText('已选中' + E.pieceName(p) + '，请按棋谱走到目标点');
+      }
+      return;
+    }
+    if (sq === sel) { sel = -1; redrawAll(); updateStatus(); return; }
+    if (sq === st.to) {
+      doHumanMove(sel, sq);
+      return;
+    }
+    var mine = p !== 0 && (p > 0 ? RED : BLACK) === game.turn;
+    if (mine) { sel = sq; redrawAll(); statusText('已选中' + E.pieceName(p) + '，请按棋谱走到目标点'); return; }
+    sel = -1;
+    redrawAll();
+    updateStatus();
+    toast('请按棋谱路线走哦（建议：' + st.name + '）', 2000);
   }
 
   function tapSquare(sq) {
@@ -495,6 +678,7 @@
       return;
     }
     if (game.over) { sel = -1; redrawAll(); return; }
+    if (game.mode === 'book') { tapBookSquare(sq); return; }
     if (game.mode === 'ai' && game.turn !== game.playerSide) return;
     var p = game.board[sq];
     var mine = p !== 0 && (p > 0 ? RED : BLACK) === game.turn;
@@ -550,6 +734,31 @@
   }
 
   function doUndo() {
+    if (game.mode === 'book') {
+      if (game.history.length === 0) { toast('无棋可悔', 2500); return; }
+      clearBookTimer();
+      // 回退到最近一着"玩家方"的着法之前(连同其后的系统演示着法一起撤销)
+      var i = game.history.length - 1;
+      while (i >= 0) {
+        var s = books[game.bookIdx] && books[game.bookIdx].steps[i];
+        if (s && s.mover === sideKey(game.playerSide)) break;
+        i--;
+      }
+      if (i < 0) i = Math.max(0, game.history.length - 1);
+      var n = game.history.length - i;
+      for (var k = 0; k < n; k++) unmake(game);
+      game.stepIdx = i;
+      game.over = false;
+      game.result = null;
+      sel = -1;
+      log('悔棋回到第 ' + i + ' 步');
+      redrawAll();
+      save();
+      setControls();
+      var st = currentStep();
+      if (st) showComment(st);
+      return;
+    }
     var n = game.mode === 'ai' ? 2 : 1;
     if (game.history.length === 0) { toast('无棋可悔', 2500); return; }
     if (aiThinking) {
@@ -571,6 +780,21 @@
   function doNewGame() {
     var prev = game;
     cancelAI();
+    clearBookTimer();
+    if (prev.mode === 'book') {
+      game = freshBookGame(prev.bookIdx);
+      sel = -1;
+      log('棋谱研习重新开始: ' + currentBook().title);
+      closeSettings();
+      redrawAll();
+      save();
+      setControls();
+      syncSettingsUI();
+      showBookIntro();
+      var st = currentStep();
+      if (st && st.mover !== sideKey(game.playerSide)) scheduleBookMove();
+      return;
+    }
     game = freshGame();
     game.mode = prev.mode;
     game.level = prev.level;
@@ -606,9 +830,14 @@
     // 强制销毁未完成请求与临时通知, 状态栏彻底重置后显示临时提示(自动恢复)
     cancelAI();
     aiError = null;
+    if (game.mode === 'book') clearBookTimer();
     log('去残影: 全屏重绘');
     redrawAll();
     toast('屏幕已刷新，残影已清除', 2500);
+    if (game.mode === 'book' && !game.over) {
+      var st = currentStep();
+      if (st && st.mover !== sideKey(game.playerSide)) scheduleBookMove();
+    }
   }
 
   function cancelAI() {
@@ -620,14 +849,89 @@
   function setMode(m) {
     if (game.mode === m) return;
     cancelAI();
-    game.mode = m;
+    clearBookTimer();
+    if (m === 'book') {
+      if (!books.length) { toast('暂无可用的棋谱，请检查数据', 2500); syncSettingsUI(); return; }
+      game = freshBookGame(0);
+      log('模式切换: 棋谱研习');
+    } else {
+      game.mode = m;
+    }
     sel = -1;
-    log('模式切换: ' + (m === 'ai' ? '人机对战' : '双人同屏'));
     redrawAll();
     save();
     setControls();
     syncSettingsUI();
+    if (m === 'book') {
+      closeSettings();
+      showBookIntro();
+      var st = currentStep();
+      if (st && st.mover !== sideKey(game.playerSide)) scheduleBookMove();
+      return;
+    }
     if (m === 'ai' && !game.over && game.turn !== game.playerSide) startAI();
+  }
+
+  function selectBook(idx) {
+    if (!books[idx]) return;
+    cancelAI();
+    clearBookTimer();
+    game = freshBookGame(idx);
+    sel = -1;
+    log('棋谱研习: ' + books[idx].title);
+    closeSettings();
+    redrawAll();
+    save();
+    setControls();
+    syncSettingsUI();
+    showBookIntro();
+    var st = currentStep();
+    if (st && st.mover !== sideKey(game.playerSide)) scheduleBookMove();
+  }
+
+  function renderBookList() {
+    bookList.innerHTML = '';
+    bookBtns = [];
+    for (var i = 0; i < books.length; i++) {
+      (function (idx) {
+        var b = document.createElement('button');
+        b.className = 'btn mSel';
+        b.textContent = (idx + 1) + '. ' + books[idx].title;
+        b.setAttribute('data-bidx', idx);
+        b.addEventListener('click', function () { selectBook(idx); });
+        bookList.appendChild(b);
+        bookBtns.push(b);
+      })(i);
+    }
+  }
+
+  // 用规则引擎逐着回放校验棋谱数据, 非法谱剔除(不影响其它模式)
+  function loadBookData() {
+    var all = (typeof CHESS_BOOKS !== 'undefined' && Array.isArray(CHESS_BOOKS)) ? CHESS_BOOKS : [];
+    var okBooks = [];
+    for (var i = 0; i < all.length; i++) {
+      var bk = all[i];
+      if (!bk || !Array.isArray(bk.steps) || !bk.steps.length) { errorLog('棋谱数据非法, 已剔除: ' + (bk && bk.id)); continue; }
+      var b = E.initialBoard();
+      var turn = RED;
+      var valid = true;
+      for (var j = 0; j < bk.steps.length; j++) {
+        var s = bk.steps[j];
+        if (!s || s.from < 0 || s.from > 89 || s.to < 0 || s.to > 89 || !b[s.from]) { valid = false; break; }
+        if ((b[s.from] > 0 ? RED : BLACK) !== turn) { valid = false; break; }
+        if ((b[s.from] > 0 ? RED : BLACK) !== (s.mover === 'black' ? BLACK : RED)) { valid = false; break; }
+        var moves = E.legalMoves(b, turn);
+        var found = false;
+        for (var k = 0; k < moves.length; k++) if (moves[k].f === s.from && moves[k].t === s.to) { found = true; break; }
+        if (!found) { valid = false; break; }
+        b[s.to] = b[s.from]; b[s.from] = 0;
+        turn = -turn;
+      }
+      if (!valid) { errorLog('棋谱校验失败, 已剔除: ' + bk.id); continue; }
+      okBooks.push(bk);
+    }
+    if (!okBooks.length) errorLog('无可用棋谱, 棋谱研习模式暂不可用');
+    return okBooks;
   }
 
   function setLevel(l) {
@@ -666,6 +970,12 @@
 
     btnUndo.addEventListener('click', doUndo);
     btnNew.addEventListener('click', doNewGame);
+    btnSpeak.addEventListener('click', function () {
+      if (!game || game.mode !== 'book') return;
+      var st = currentStep();
+      if (st) speak(st.name + '。' + st.comment);
+      else speak('本谱研习完成，点击开始可重新研习');
+    });
     btnGhost.addEventListener('click', doGhost);
     btnSettings.addEventListener('click', openSettings);
 
@@ -674,8 +984,20 @@
 
     mModeAI.addEventListener('click', function () { setMode('ai'); });
     mModeDuel.addEventListener('click', function () { setMode('duel'); });
+    mModeBook.addEventListener('click', function () { setMode('book'); });
     mSideRed.addEventListener('click', function () { doSideApply(RED); });
     mSideBlack.addEventListener('click', function () { doSideApply(BLACK); });
+    mSpeakOn.addEventListener('click', function () {
+      speakOn = true;
+      save();
+      syncSettingsUI();
+    });
+    mSpeakOff.addEventListener('click', function () {
+      speakOn = false;
+      if (window.speechSynthesis) speechSynthesis.cancel();
+      save();
+      syncSettingsUI();
+    });
 
     for (var i = 0; i < levelBtns.length; i++) {
       levelBtns[i].addEventListener('click', function () {
@@ -685,6 +1007,7 @@
 
     window.addEventListener('resize', function () { layout(); redrawAll(); });
     window.addEventListener('orientationchange', function () { setTimeout(function () { layout(); redrawAll(); }, 300); });
+    window.addEventListener('beforeunload', clearBookTimer);
   }
 
   function boot() {
@@ -695,25 +1018,39 @@
     capBlack = $('capBlack');
     btnUndo = $('btnUndo');
     btnNew = $('btnNew');
+    btnSpeak = $('btnSpeak');
     btnGhost = $('btnGhost');
     btnSettings = $('btnSettings');
     modal = $('settingsModal');
     modalBackdrop = $('modalBackdrop');
     mModeAI = $('mModeAI');
     mModeDuel = $('mModeDuel');
+    mModeBook = $('mModeBook');
     mSideRed = $('mSideRed');
     mSideBlack = $('mSideBlack');
     mClose = $('mClose');
     mGroupLevel = $('mGroupLevel');
     mGroupSide = $('mGroupSide');
+    mGroupBook = $('mGroupBook');
+    mGroupSpeak = $('mGroupSpeak');
+    mModeBookHint = $('mModeBookHint');
+    mSpeakOn = $('mSpeakOn');
+    mSpeakOff = $('mSpeakOff');
+    bookList = $('bookList');
+    bookNote = $('bookNote');
+    bookStepLabel = $('bookStepLabel');
+    bookText = $('bookText');
     levelBtns = Array.prototype.slice.call(document.querySelectorAll('#settingsModal .mSel[data-level]'));
+
+    books = loadBookData();
+    renderBookList();
 
     log('老叔之家象棋 v' + E.VERSION + ' 启动, 引擎=' + (E.engineInfo ? E.engineInfo() : E.workerInfo()));
 
     var saved = loadGame();
     if (saved) {
       game = saved;
-      log('已恢复上次对局: 第 ' + game.history.length + ' 步, 模式=' + (game.mode === 'ai' ? '人机' : '双人') + ', 难度=' + E.LEVELS[game.level - 1].name);
+      log('已恢复上次对局: 第 ' + game.history.length + ' 步, 模式=' + (game.mode === 'ai' ? '人机' : (game.mode === 'book' ? '棋谱研习' : '双人')) + ', 难度=' + E.LEVELS[game.level - 1].name);
     } else {
       game = freshGame();
       log('新对局开始');
@@ -728,6 +1065,24 @@
 
     if (game.over) log('上次对局已结束: ' + resultText(game.result));
 
+    if (game.mode === 'book') {
+      var st = currentStep();
+      if (st) {
+        if (game.stepIdx === 0) showBookIntro();
+        else showComment(st);
+      } else {
+        bookNote.hidden = false;
+        bookStepLabel.textContent = '棋谱研习';
+        bookText.textContent = '本谱全部着法已研习完毕，点击"开始"可重新研习。';
+      }
+      if (!game.over && st && st.mover !== sideKey(game.playerSide)) {
+        setTimeout(function () {
+          if (!game.over && game.mode === 'book' && currentStep() && currentStep().mover !== sideKey(game.playerSide) && !bookTimer) scheduleBookMove();
+        }, 400);
+      }
+      log('就绪: 棋盘 ' + cell.toFixed(1) + 'px/格');
+      return;
+    }
     if (game.mode === 'ai' && !game.over && game.turn !== game.playerSide) {
       setTimeout(function () {
         if (!game.over && game.mode === 'ai' && game.turn !== game.playerSide && !aiThinking) startAI();
