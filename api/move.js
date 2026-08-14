@@ -142,6 +142,7 @@ function runEngine(fen, ms, hardTimeout, netP) {
     let waiter = null;
     let exitInfo = null;
     let exitLogged = false;
+    let weKilled = false;
 
     const killTimer = setTimeout(finalize, Math.max(1000, hardTimeout));
 
@@ -151,12 +152,28 @@ function runEngine(fen, ms, hardTimeout, netP) {
       clearTimeout(killTimer);
       if (waiter) { clearTimeout(waiter.timer); waiter = null; }
       try { child.stdin && child.stdin.end(); } catch (e) {}
-      try { child.kill('SIGKILL'); } catch (e) {}
-      if (!best && !exitLogged) {
-        exitLogged = true;
-        console.error('引擎异常退出真相:', { code: exitInfo ? exitInfo.code : 'unknown', stderr: errBuf });
+      if (!best) {
+        // 主动终止: 彻底清理进程, 不留僵尸
+        weKilled = true;
+        try { child.kill('SIGKILL'); } catch (e) {}
+        if (!exitLogged) {
+          exitLogged = true;
+          console.error('引擎异常退出真相:', {
+            code: exitInfo ? exitInfo.code : 'no-exit(进程未退出, 已强制SIGKILL)',
+            signal: exitInfo ? exitInfo.signal : null,
+            stderr: errBuf
+          });
+        }
+      } else {
+        // 成功: 引擎已输出 bestmove, 同样强制清理子进程
+        try { child.kill('SIGKILL'); } catch (e) {}
       }
-      resolve({ best, depth: lastDepth, score: lastScore, nodes, ms: goSentAt ? Date.now() - goSentAt : Date.now() - t0 });
+      resolve({
+        best, depth: lastDepth, score: lastScore, nodes,
+        ms: goSentAt ? Date.now() - goSentAt : Date.now() - t0,
+        info: exitInfo ? { code: exitInfo.code, signal: exitInfo.signal, killedByUs: weKilled } : null,
+        stderrTail: errBuf
+      });
     }
 
     function waitFor(sub, timeoutMs) {
@@ -197,17 +214,23 @@ function runEngine(fen, ms, hardTimeout, netP) {
         }
       }
     });
-    child.stdout && child.stdout.on('end', finalize);
     child.stdout && child.stdout.on('error', e => { if (!done) console.error('引擎 stdout 错误:', e && e.code, e && e.message); });
     child.stderr && child.stderr.setEncoding('utf8');
     child.stderr && child.stderr.on('data', d => { errBuf = (errBuf + d).slice(-8000); });
     child.stderr && child.stderr.on('error', e => { if (!done) console.error('引擎 stderr 错误:', e && e.code, e && e.message); });
     child.stdin && child.stdin.on('error', e => { if (!done) console.error('引擎 stdin 异步错误:', e && e.code, e && e.message); });
     child.on('exit', (code, signal) => {
-      exitInfo = { code: code === null ? 'SIGKILL(' + signal + ')' : code, signal: signal };
-      if (((code !== null && code !== 0) || (signal && signal !== 'SIGKILL') || !best) && !exitLogged) {
+      // 唯一的真实完成信号: 引擎进程退出(先于/晚于 stdout end 都以此为准)
+      exitInfo = { code: code, signal: signal, killedByUs: weKilled };
+      if (!done && ((code !== null && code !== 0) || (signal && !weKilled) || !best) && !exitLogged) {
         exitLogged = true;
-        console.error('引擎异常退出真相:', { code: code, signal: signal, stderr: errBuf });
+        console.error('引擎异常退出真相:', {
+          code: code,
+          signal: signal,
+          killedByUs: weKilled,
+          best: best,
+          stderr: errBuf
+        });
       }
       finalize();
     });
@@ -283,14 +306,20 @@ module.exports = async function handler(req, res) {
   const netP = downloadNet();
 
   let move = null, depth = 0, score = 0, nodes = 0, usedMs = 0, netInfo = null;
-  const r = await runEngine(fen, ms, ENGINE_BUDGET, netP);
+  // 引擎生命周期兜底: 若首轮 spawn 失败/闪退/未出着法, 自动重启全新进程再算一次
+  let r = await runEngine(fen, ms, ENGINE_BUDGET, netP);
+  if (!(r && r.best)) {
+    console.error('[MOVE] 引擎首轮异常, 自动重启进程重试: ' + JSON.stringify(r && r.info) + ' stderr=' + (r && r.stderrTail ? JSON.stringify(r.stderrTail) : '""'));
+    r = await runEngine(fen, ms, ENGINE_BUDGET, netP);
+    if (r && r.best) console.log('[MOVE] 引擎重启成功');
+  }
   netInfo = await netP;
   if (r && r.best) {
     move = uciToSq(r.best);
     depth = r.depth; score = r.score; nodes = r.nodes; usedMs = r.ms;
   }
   const totalMs = Date.now() - t0;
-  if (!move) console.error('[MOVE] 引擎未返回着法, totalMs', totalMs, 'netInfo', JSON.stringify(netInfo));
+  if (!move) console.error('[MOVE] 引擎两轮均未返回着法, totalMs', totalMs, 'netInfo', JSON.stringify(netInfo));
   resp(res, 200, {
     fen,
     move,
