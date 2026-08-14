@@ -1,9 +1,12 @@
 'use strict';
 /* 老叔之家象棋 云端算棋 API (Vercel Serverless)
    GET /api/move?fen=<FEN>&level=1..5
-   无状态: 每次请求独立启动一次 Pikafish, 单次搜索硬上限 SEARCH_MS_CAP(5s),
-   整体受 TOTAL_BUDGET(8.5s) 兜底并被 vercel.json maxDuration 保护, 杜绝 504。
-   NNUE(53MB) 不打包: 首次冷启动从 NNUE_URL 下载到 /tmp 复用。 */
+   无状态: 每次请求独立启动一次 Pikafish, 单次搜索硬上限 SEARCH_MS_CAP(1.5s)。
+   冷启动防线(三层):
+   1) vercel.json maxDuration=60s: 突破 Hobby 默认 10s 硬杀;
+   2) NNUE(52MB) 下载与引擎握手并行 + 多源竞争(主源/gh-proxy/ghfast), 6s 预算;
+   3) 下载超时/失败 -> Use NNUE=false 经典评估降级, 绝不让"等权重"拖死整局。
+   响应携带 nnue 字段: {mode: nnue|classic|cached|none, ms, bytes, src} 供前端调试展示。 */
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -13,14 +16,48 @@ const ENGINE_DIR = path.dirname(ENGINE);
 // AL2023 精简镜像缺 libatomic.so.1, 引擎链接了 __atomic_* 符号, 需随包自带并注入加载路径
 const LIB_DIR = path.join(ENGINE_DIR, 'libatomic');
 const NNUE = process.env.PIKAFISH_NNUE ? path.join(process.env.PIKAFISH_NNUE) : '/tmp/pikafish.nnue';
-const NNUE_URL = process.env.NNUE_URL || '';
+const NNUE_URL = (process.env.NNUE_URL || '').trim();
 const LEVEL_MS = { 1: 250, 2: 450, 3: 700, 4: 1000, 5: 1500 };
 const SEARCH_MS_CAP = 1500;
-const TOTAL_BUDGET = 5000;
-const NET_TIMEOUT = 8000;
+const NET_BUDGET = 6000;      // NNUE 下载总预算: 并行执行, 超时即降级经典评估
+const ENGINE_BUDGET = 7000;   // 引擎从 spawn 到返回的硬上限
+const NNUE_MIN_BYTES = 10000000;
 
 // /tmp 权重文件进程级缓存标志: 一旦就绪, 本实例内永不重复下载/重复 stat
 let netReady = false;
+
+// 下载源池: 主源 + GitHub 形态自动附加国内加速镜像, race 取最快
+function nnueSources() {
+  if (!NNUE_URL) return [];
+  const list = [NNUE_URL];
+  if (/github\.com\//.test(NNUE_URL) && !/gh-proxy\.com|ghfast\.top/.test(NNUE_URL)) {
+    list.push('https://gh-proxy.com/' + NNUE_URL, 'https://ghfast.top/' + NNUE_URL);
+  }
+  return list;
+}
+
+async function fetchOne(url, signal) {
+  const res = await fetch(url, { redirect: 'follow', signal });
+  if (!res.ok) return { ok: false, url, status: res.status, bytes: 0 };
+  const buf = Buffer.from(await res.arrayBuffer());
+  return { ok: buf.length >= NNUE_MIN_BYTES, url, status: res.status, buf, bytes: buf.length };
+}
+
+// 取第一个成功的下载结果; 全部失败(含超时中断)则 settle {ok:false}
+function raceFirstOk(promises) {
+  return new Promise((resolveAll) => {
+    let done = false;
+    let count = 0;
+    promises.forEach(p => {
+      const onEnd = r => {
+        if (!done && r && r.ok) { done = true; resolveAll(r); return; }
+        count += 1;
+        if (count === promises.length && !done) { done = true; resolveAll({ ok: false, status: 0 }); }
+      };
+      p.then(onEnd).catch(e => { onEnd({ ok: false, status: 0, err: String(e && e.message || e) }); });
+    });
+  });
+}
 
 function engineEnv() {
   const e = Object.assign({}, process.env);
@@ -50,36 +87,37 @@ function uciToSq(moveStr) {
 }
 
 async function downloadNet() {
-  if (!NNUE_URL) return true;
-  if (netReady) return true;
-  if (fs.existsSync(NNUE) && fs.statSync(NNUE).size > 10000000) {
+  if (!NNUE_URL) return { mode: 'none' };
+  if (netReady) return { mode: 'cached' };
+  if (fs.existsSync(NNUE) && fs.statSync(NNUE).size > NNUE_MIN_BYTES) {
     netReady = true;
-    console.log('NNUE 缓存命中, 直接复用:', NNUE);
-    return true;
+    console.log('[NNUE] 缓存命中, 直接复用:', NNUE);
+    return { mode: 'cached' };
   }
+  const srcs = nnueSources();
+  const t0 = Date.now();
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), NET_TIMEOUT);
+  const timer = setTimeout(() => { try { ctrl.abort(); } catch (e) {} }, NET_BUDGET);
   try {
-    const res = await fetch(NNUE_URL, { redirect: 'follow', signal: ctrl.signal });
-    if (!res.ok) {
-      console.error('NNUE 下载状态异常:', res.status);
-      return false;
+    const r = await raceFirstOk(srcs.map(u => fetchOne(u, ctrl.signal)));
+    if (r.ok && r.buf) {
+      fs.writeFileSync(NNUE, r.buf, { mode: 0o644 });
+      netReady = true;
+      console.log('[NNUE] 下载完成:', r.url, r.bytes, 'bytes, 耗时', Date.now() - t0, 'ms');
+      return { mode: 'nnue', src: r.url, ms: Date.now() - t0, bytes: r.bytes };
     }
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length < 10000000) return false;
-    fs.writeFileSync(NNUE, buf, { mode: 0o644 });
-    netReady = true;
-    console.log('NNUE 下载完成:', NNUE, buf.length, 'bytes');
-    return true;
+    console.error('[NNUE] 下载失败/超时(预算', NET_BUDGET, 'ms):', srcs.join(' | '),
+      r.status ? '最后状态 ' + r.status : '', r.err || '', '-> 降级经典评估');
+    return { mode: 'classic', ms: Date.now() - t0 };
   } catch (e) {
-    console.error('NNUE 下载网络/超时报错:', e);
-    return false;
+    console.error('[NNUE] 下载异常:', e && e.message, '-> 降级经典评估');
+    return { mode: 'classic', ms: Date.now() - t0 };
   } finally {
     clearTimeout(timer);
   }
 }
 
-function runEngine(fen, ms, hardTimeout) {
+function runEngine(fen, ms, hardTimeout, netP) {
   return new Promise((resolve) => {
     let child;
     try {
@@ -189,7 +227,14 @@ function runEngine(fen, ms, hardTimeout) {
         send('uci');
         await waitFor('uciok', 3000);
         if (done) return;
-        send('setoption name EvalFile value ' + NNUE);
+        // 下载与 UCI 握手并行进行: 此时下载已并行跑了约 1s, 剩余预算内决出
+        const netInfo = netP ? await netP : { mode: 'none' };
+        if (done) return;
+        if (netInfo.mode === 'nnue') {
+          send('setoption name EvalFile value ' + NNUE);
+        } else if (netInfo.mode === 'classic') {
+          send('setoption name Use NNUE value false');
+        }
         send('isready');
         await waitFor('readyok', 3000);
         if (done) return;
@@ -234,17 +279,18 @@ module.exports = async function handler(req, res) {
   const ms = LEVEL_MS[lv];
 
   const t0 = Date.now();
-  const netOk = await downloadNet();
+  // 下载立即并行启动, 不阻塞引擎流程
+  const netP = downloadNet();
 
-  let move = null, depth = 0, score = 0, nodes = 0, usedMs = 0;
-  if (netOk) {
-    const remaining = TOTAL_BUDGET - (Date.now() - t0);
-    const r = await runEngine(fen, ms, Math.min(remaining, 7000));
-    if (r && r.best) {
-      move = uciToSq(r.best);
-      depth = r.depth; score = r.score; nodes = r.nodes; usedMs = r.ms;
-    }
+  let move = null, depth = 0, score = 0, nodes = 0, usedMs = 0, netInfo = null;
+  const r = await runEngine(fen, ms, ENGINE_BUDGET, netP);
+  netInfo = await netP;
+  if (r && r.best) {
+    move = uciToSq(r.best);
+    depth = r.depth; score = r.score; nodes = r.nodes; usedMs = r.ms;
   }
+  const totalMs = Date.now() - t0;
+  if (!move) console.error('[MOVE] 引擎未返回着法, totalMs', totalMs, 'netInfo', JSON.stringify(netInfo));
   resp(res, 200, {
     fen,
     move,
@@ -252,10 +298,16 @@ module.exports = async function handler(req, res) {
     depth,
     score,
     nodes,
-    ms: usedMs || (Date.now() - t0),
-    totalMs: Date.now() - t0,
+    ms: usedMs || totalMs,
+    totalMs,
     ok: !!move,
     engine: 'pikafish-2026-01-02',
-    netReady: netOk
+    netReady: !!netInfo && netInfo.mode !== 'classic' && netInfo.mode !== 'none',
+    nnue: {
+      mode: netInfo ? netInfo.mode : 'unknown',
+      src: netInfo && netInfo.src ? netInfo.src : null,
+      bytes: netInfo && netInfo.bytes ? netInfo.bytes : null,
+      ms: netInfo && netInfo.ms ? netInfo.ms : null
+    }
   });
 };

@@ -458,6 +458,7 @@
         setControls();
         return;
       }
+      if (DEBUG && res.nnue) log('AI 权重模式: ' + JSON.stringify(res.nnue));
       var mv = res.move;
       var legal = E.legalMoves(game.board, game.turn);
       var ok = false;
