@@ -17,14 +17,17 @@ const ENGINE_DIR = path.dirname(ENGINE);
 const LIB_DIR = path.join(ENGINE_DIR, 'libatomic');
 const NNUE = process.env.PIKAFISH_NNUE ? path.join(process.env.PIKAFISH_NNUE) : '/tmp/pikafish.nnue';
 const NNUE_URL = (process.env.NNUE_URL || '').trim();
-// ===== 难度标定(智商梯度重塑) =====
-//   Level 1 新手(少儿): 极短搜索 + MultiPV 前三着随机轮盘(45/35/20), 明显漏勺与随手棋, 让孩子轻松吃子赢棋
-//   Level 2 入门: go depth 3 精确标定, 走法规矩、无低级大勺子, 适合打基础
-//   Level 3~5 中级/高级/大师: 原有递增算力不变
-const LEVEL_MS = { 1: 150, 2: 400, 3: 700, 4: 1000, 5: 1500 };
-const LEVEL_DEPTH = { 2: 3 };            // Level 2 用 depth 精确限层
-const LEVEL_MULTIPV = { 1: 3 };          // Level 1 出前 3 佳着供随机
-const LEVEL_WEAK_PICK = { 1: [45, 35, 20] };  // Level 1 权重: top1/top2/top3 概率(%)
+// ===== 难度标定(智商梯度重塑 · 全档弱化, 面向刚学棋的小朋友) =====
+//   Level 1 幼儿(刚学走棋): MultiPV 6 + 80ms 极浅搜索, 永不选 top1(其余着法均匀随机),
+//     走法平淡随手, 常把子送到小朋友嘴边, 孩子能轻松吃子赢棋
+//   Level 2 新手: MultiPV 3 + 150ms, top1/2/3 按 45/35/20 权重轮盘(偶尔漏勺)
+//   Level 3 入门: go depth 3 规矩下法, 无低级大勺
+//   Level 4 中级: go depth 5
+//   Level 5 高级: go depth 7(顶档封顶, 不再碾压小朋友)
+const LEVEL_MS = { 1: 80, 2: 150, 3: 400, 4: 700, 5: 1000 };
+const LEVEL_DEPTH = { 3: 3, 4: 5, 5: 7 };
+const LEVEL_MULTIPV = { 1: 6, 2: 3 };              // 幼儿: 6 佳着供随机(稀释搜索更弱); 新手: 前 3 佳着
+const LEVEL_WEAK = { 1: 'random-notop', 2: 'roulette' };
 const SEARCH_MS_CAP = 1500;
 const NET_BUDGET = 6000;      // NNUE 下载总预算: 并行执行, 超时即降级经典评估
 const ENGINE_BUDGET = 7000;   // 引擎 spawn..go 前的握手阶段预算(下载+uciok+readyok)
@@ -215,20 +218,27 @@ function runEngine(fen, ms, hardTimeout, netP, opts) {
         if (line.startsWith('bestmove')) {
           best = line.split(/\s+/)[1] || null;
           if (best) {
-            // Level 1 新手: 按权重从前 3 佳着中随机轮盘(明显漏勺与随手棋, 不再步步紧逼)
-            const pickW = opts && LEVEL_WEAK_PICK[opts.weak];
-            if (pickW && Object.keys(pvByMultipv).length >= 2) {
+            // 难度放水: Level 1 幼儿永不选 top1(其余均匀随机); Level 2 新手按 45/35/20 轮盘
+            const weakMode = opts && LEVEL_WEAK[opts.weak];
+            if (weakMode && Object.keys(pvByMultipv).length >= 2) {
               // 引擎最终 bestmove 才是 multipv1 的权威值(防旧 info 行覆盖)
               if (pvByMultipv['1'] && best && best !== '0000' && best !== '(none)') {
                 pvByMultipv['1'] = { move: best, depth: lastDepth, score: lastScore };
               }
               const pvList = Object.keys(pvByMultipv).sort((a, b) => +a - +b).map(k => pvByMultipv[k]);
-              const r = Math.random() * 100;
-              let chosen = pvList[0];
-              if (r >= pickW[0] && r < pickW[0] + pickW[1]) chosen = pvList[1] || pvList[0];
-              else if (r >= pickW[0] + pickW[1]) chosen = pvList[2] || pvList[1] || pvList[0];
+              let chosen = null;
+              if (weakMode === 'random-notop') {
+                // 幼儿: 绝不出最强着, 在其余佳着中均匀随机(走法平淡随手, 常送子给小朋友吃)
+                const rest = pvList.slice(1);
+                if (rest.length) chosen = rest[Math.floor(Math.random() * rest.length)];
+              } else {
+                // 新手: top1/top2/top3 权重轮盘(45/35/20), 偶发漏勺
+                const r = Math.random() * 100;
+                if (r >= 45 && r < 80) chosen = pvList[1] || pvList[0];
+                else if (r >= 80) chosen = pvList[2] || pvList[1] || pvList[0];
+              }
               if (chosen && chosen.move && chosen.move !== '(none)' && chosen.move !== '0000') {
-                if (chosen.move !== best) console.log('[WEAK] Level1 放水: top1=' + best + ' -> 改走 ' + chosen.move + ' (multipv' + pvList.indexOf(chosen) + ')');
+                if (chosen.move !== best) console.log('[WEAK] L' + opts.weak + '(' + weakMode + ') 放水: top1=' + best + ' -> 改走 ' + chosen.move);
                 best = chosen.move;
                 lastDepth = chosen.depth || lastDepth;
                 lastScore = chosen.score || lastScore;
@@ -316,13 +326,13 @@ function runEngine(fen, ms, hardTimeout, netP, opts) {
         await waitFor('readyok', 3000);
         if (done) return;
         const elapsed = Date.now() - t0;
-        // 难度标定: Level 1 开 MultiPV 前三着供随机放水; Level 2 用 depth 精确限层
+        // 难度标定: L1/L2 开 MultiPV 供随机放水; L3~5 用 depth 精确限层
         if (opts && opts.multipv) {
           send('setoption name MultiPV value ' + opts.multipv);
-          console.log('[MULTIPV] MultiPV value ' + opts.multipv + ' (Level1 放水轮盘)');
+          console.log('[MULTIPV] MultiPV value ' + opts.multipv + ' (L' + opts.weak + ' 放水)');
         }
         // go 的 movetime 绝不被剩余预算缩水: 先给足档位时间, 强杀时刻随 go 动态后移
-        const useGoMs = Math.max(100, Math.min(ms, SEARCH_MS_CAP));
+        const useGoMs = Math.max(50, Math.min(ms, SEARCH_MS_CAP));
         goSentAt = Date.now();
         // 强杀 deadline = max(握手预留下限, go后计算时间+宽限); 确保引擎 movetime 内不可能被杀
         const deadline = Math.max(t0 + ENGINE_BUDGET + KILL_GRACE, goSentAt + useGoMs + KILL_GRACE);
@@ -368,7 +378,7 @@ module.exports = async function handler(req, res) {
 
   let move = null, depth = 0, score = 0, nodes = 0, usedMs = 0, netInfo = null;
   // 引擎生命周期兜底: 若首轮 spawn 失败/闪退/未出着法, 自动重启全新进程再算一次
-  const rOpts = { multipv: LEVEL_MULTIPV[lv] || 0, depth: LEVEL_DEPTH[lv] || 0, weak: LEVEL_WEAK_PICK[lv] ? lv : 0 };
+  const rOpts = { multipv: LEVEL_MULTIPV[lv] || 0, depth: LEVEL_DEPTH[lv] || 0, weak: LEVEL_WEAK[lv] ? lv : 0 };
   let r = await runEngine(fen, ms, ENGINE_BUDGET, netP, rOpts);
   if (!(r && r.best)) {
     console.error('[MOVE] 引擎首轮异常, 自动重启进程重试: ' + JSON.stringify(r && r.info) + ' stderr=' + (r && r.stderrTail ? JSON.stringify(r.stderrTail) : '""'));

@@ -886,6 +886,7 @@
     game.mode = prev.mode;
     game.level = prev.level;
     game.playerSide = prev.playerSide;
+    bookNote.hidden = true;   // 非棋谱模式新局不显示讲解条
     sel = -1;
     log('新局开始: mode=' + (game.mode === 'ai' ? '人机' : '双人') + ' level=' + game.level);
     closeSettings();
@@ -943,6 +944,7 @@
       log('模式切换: 棋谱研习');
     } else {
       game.mode = m;
+      bookNote.hidden = true;   // 退出棋谱模式必须隐藏讲解/说明条, 避免遮挡版面
     }
     sel = -1;
     redrawAll();
@@ -1175,6 +1177,7 @@
         if (!game.over && game.mode === 'ai' && game.turn !== game.playerSide && !aiThinking) startAI();
       }, 400);
     }
+    if (game.mode !== 'book') bookNote.hidden = true;   // 恢复的非棋谱存档不显示讲解条
     log('就绪: 棋盘 ' + cell.toFixed(1) + 'px/格');
   }
 

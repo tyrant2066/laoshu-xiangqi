@@ -9,11 +9,11 @@
   var BLK_NAME = ['将', '士', '象', '马', '车', '炮', '卒'];
 
   var LEVELS = [
+    { name: '幼儿' },
     { name: '新手' },
     { name: '入门' },
     { name: '中级' },
-    { name: '高级' },
-    { name: '大师' }
+    { name: '高级' }
   ];
 
   var ZR = new Uint32Array(14 * 90 + 1);
